@@ -592,22 +592,17 @@ def process_row(row, stock_codes, stock_names):
         
         logging.info(f"处理股票: {stock_code} - {stock_name}")
 
-        # 检查股票代码格式
+        # 检查股票代码格式 - 简化筛选，只要有交易所后缀就接受
         if '.' in stock_code:  # 已经包含后缀
-            # 处理A股、ETF和指数
-            if ((stock_code.startswith(('600', '601', '603', '605', '688')) and stock_code.endswith('.SH')) or  # 上海所有板块
-                (stock_code.startswith(('000', '002', '300', '301')) and stock_code.endswith('.SZ')) or  # 深圳所有板块
-                (stock_code.startswith(('51', '58')) and stock_code.endswith('.SH')) or  # 上海ETF
-                (stock_code.startswith('15') and stock_code.endswith('.SZ')) or  # 深圳ETF
-                # 增加对指数的支持
-                (stock_code.startswith(('000', '399')) and stock_code.endswith(('.SH', '.SZ')))):  # 主要指数
+            # 接受所有标准格式的证券代码（包括股票、ETF、指数、可转债等）
+            if stock_code.endswith(('.SH', '.SZ', '.BJ')):  # 支持上海、深圳、北交所
                 stock_codes.append(stock_code)
                 stock_names.append(stock_name)
-                logging.info(f"添加股票/ETF/指数: {stock_code} - {stock_name}")
+                logging.info(f"添加证券: {stock_code} - {stock_name}")
             else:
-                logging.info(f"跳过股票（代码格式不匹配）: {stock_code}")
+                logging.info(f"跳过证券（交易所代码不支持）: {stock_code}")
         else:
-            logging.info(f"跳过股票（无交易所后缀）: {stock_code}")
+            logging.info(f"跳过证券（无交易所后缀）: {stock_code}")
 
 def download_and_store_data(local_data_path, stock_files, field_list, period_type, start_date, end_date, dividend_type='none', time_range='all', progress_callback=None, log_callback=None, check_interrupt=None):
     """
@@ -1174,6 +1169,7 @@ def get_stock_list():
             'hs300_components': [],  # 沪深300成分股
             'zz500_components': [],  # 中证500成分股
             'sz50_components': [],   # 上证50成分股
+            'hs_convertible_bonds': [],  # 沪深转债
         }
         
         # 重要指数列表
@@ -1207,6 +1203,7 @@ def get_stock_list():
         for sector_name, dict_key in sector_mapping.items():
             try:
                 logging.info(f"获取{sector_name}股票列表...")
+                print(f"[更新进度] 正在获取{sector_name}股票列表...")
                 stocks = xtdata.get_stock_list_in_sector(sector_name)
                 if stocks:
                     logging.info(f"获取到 {len(stocks)} 只{sector_name}股票")
@@ -1266,6 +1263,40 @@ def get_stock_list():
             except Exception as e:
                 logging.error(f"获取{index_name}成分股列表时出错: {str(e)}")
 
+        # 获取沪深转债成分股
+        convertible_bonds_mapping = {
+            '沪深转债': 'hs_convertible_bonds'
+        }
+        
+        for cb_name, dict_key in convertible_bonds_mapping.items():
+            try:
+                logging.info(f"获取{cb_name}成分股...")
+                cb_stocks = xtdata.get_stock_list_in_sector(cb_name)
+                if cb_stocks:
+                    logging.info(f"获取到 {len(cb_stocks)} 只{cb_name}")
+                    for code in cb_stocks:
+                        try:
+                            detail = xtdata.get_instrument_detail(code)
+                            if detail:
+                                if isinstance(detail, str):
+                                    detail = ast.literal_eval(detail)
+                                name = detail.get('InstrumentName', '')
+                                if name and '转债' in name:
+                                    bond_info = {
+                                        'code': code,
+                                        'name': name
+                                    }
+                                    stock_dict[dict_key].append(bond_info)
+                                    # 不将转债添加到all_stocks中，因为它们是债券而非股票
+                        except Exception as e:
+                            logging.error(f"处理{cb_name} {code} 时出错: {str(e)}")
+                            continue
+                    logging.info(f"成功添加 {len(stock_dict[dict_key])} 只{cb_name}")
+                else:
+                    logging.warning(f"未获取到{cb_name}")
+            except Exception as e:
+                logging.error(f"获取{cb_name}列表时出错: {str(e)}")
+
         # 添加指数并同时添加到all_stocks
         stock_dict['indices'] = important_indices
         for index in important_indices:
@@ -1304,13 +1335,17 @@ def save_stock_list_to_csv(stock_dict, output_dir):
             'all_stocks': '全部股票',
             'hs300_components': '沪深300成分股',
             'zz500_components': '中证500成分股',
-            'sz50_components': '上证50成分股'
+            'sz50_components': '上证50成分股',
+            'hs_convertible_bonds': '沪深转债'
         }
         
         # 为每个板块创建CSV文件
         for board, stocks in stock_dict.items():
-            # 保存单个板块文件
-            file_path = os.path.join(output_dir, f"{board_names[board]}_股票列表.csv")
+            # 保存单个板块文件，沪深转债使用特定文件名
+            if board == 'hs_convertible_bonds':
+                file_path = os.path.join(output_dir, "沪深转债_列表.csv")
+            else:
+                file_path = os.path.join(output_dir, f"{board_names[board]}_股票列表.csv")
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 for stock in stocks:
                     f.write(f"{stock['code']},{stock['name']}\n")
@@ -1322,17 +1357,342 @@ def save_stock_list_to_csv(stock_dict, output_dir):
         logging.error(f"保存股票列表时出错: {str(e)}", exc_info=True)
         raise
 
+def stock_list_worker(output_dir, queue):
+    """多进程工作函数：在子进程中执行股票列表更新"""
+    try:
+        # Windows multiprocessing 保护
+        import multiprocessing
+        if hasattr(multiprocessing, 'set_start_method'):
+            try:
+                multiprocessing.set_start_method('spawn', force=True)
+            except RuntimeError:
+                pass  # 可能已经设置过了
+        
+        # 在子进程中导入模块，避免Qt冲突
+        from xtquant import xtdata
+        import ast
+        import logging
+        
+        # 发送进度消息
+        queue.put(("progress", "正在初始化客户端连接..."))
+        
+        # 发送进度消息
+        queue.put(("progress", "正在下载板块数据..."))
+        xtdata.download_sector_data()
+        queue.put(("progress", "板块数据下载完成"))
+        
+        # 发送进度消息
+        queue.put(("progress", "正在获取股票列表..."))
+        stock_dict = get_stock_list_for_subprocess(queue)
+        queue.put(("progress", "股票列表获取完成"))
+        
+        # 发送进度消息
+        queue.put(("progress", "正在保存股票列表..."))
+        save_stock_list_to_csv_for_subprocess(stock_dict, output_dir, queue)
+        queue.put(("progress", "股票列表保存完成"))
+        
+        # 发送完成消息
+        queue.put(("finished", True, "股票列表更新成功！"))
+        
+    except Exception as e:
+        error_msg = f"更新股票列表时出错: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        queue.put(("finished", False, error_msg))
+
+def get_stock_list_for_subprocess(queue):
+    """子进程版本的获取股票列表函数，带进度反馈"""
+    from xtquant import xtdata
+    import ast
+    
+    # 初始化返回的字典
+    stock_dict = {
+        'sh_a': [],      # 上证A股
+        'sz_a': [],      # 深证A股
+        'gem': [],       # 创业板
+        'sci': [],       # 科创板
+        'hs_a': [],      # 沪深A股
+        'indices': [],   # 指数
+        'all_stocks': [], # 所有股票的集合
+        'hs300_components': [],  # 沪深300成分股
+        'zz500_components': [],  # 中证500成分股
+        'sz50_components': [],   # 上证50成分股
+        'hs_convertible_bonds': [],  # 沪深转债
+    }
+    
+    # 重要指数列表
+    important_indices = [
+        {'code': '000001.SH', 'name': '上证指数'},
+        {'code': '399001.SZ', 'name': '深证成指'},
+        {'code': '399006.SZ', 'name': '创业板指'},
+        {'code': '000688.SH', 'name': '科创50'},
+        {'code': '000300.SH', 'name': '沪深300'},
+        {'code': '000905.SH', 'name': '中证500'},
+        {'code': '000852.SH', 'name': '中证1000'}
+    ]
+
+    # 板块映射
+    sector_mapping = {
+        '上证A股': 'sh_a',
+        '深证A股': 'sz_a',
+        '创业板': 'gem',
+        '科创板': 'sci',
+        '沪深A股': 'hs_a'
+    }
+    
+    # 指数成分股映射
+    index_components_mapping = {
+        '沪深300': 'hs300_components',
+        '中证500': 'zz500_components',
+        '上证50': 'sz50_components'
+    }
+
+    # 获取各个板块的股票
+    for sector_name, dict_key in sector_mapping.items():
+        queue.put(("progress", f"正在获取{sector_name}股票列表..."))
+        print(f"[更新进度] 正在获取{sector_name}股票列表...", flush=True)
+        try:
+            stocks = xtdata.get_stock_list_in_sector(sector_name)
+            if stocks:
+                print(f"[更新进度] 获取到 {len(stocks)} 只{sector_name}股票，正在处理详细信息...", flush=True)
+                processed_count = 0
+                for code in stocks:
+                    try:
+                        detail = xtdata.get_instrument_detail(code)
+                        if detail:
+                            if isinstance(detail, str):
+                                detail = ast.literal_eval(detail)
+                            name = detail.get('InstrumentName', '')
+                            if name:
+                                stock_info = {'code': code, 'name': name}
+                                stock_dict[dict_key].append(stock_info)
+                                if dict_key != 'hs_a':
+                                    stock_dict['all_stocks'].append(stock_info)
+                                processed_count += 1
+                                # 每处理100只股票输出一次进度
+                                if processed_count % 100 == 0:
+                                    print(f"[更新进度] {sector_name} 已处理 {processed_count}/{len(stocks)} 只股票", flush=True)
+                                    queue.put(("progress", f"{sector_name} 已处理 {processed_count}/{len(stocks)} 只股票"))
+                    except Exception as e:
+                        continue
+                
+                print(f"[更新进度] {sector_name} 完成，共获取 {len(stock_dict[dict_key])} 只有效股票", flush=True)
+            else:
+                print(f"[更新进度] {sector_name} 板块没有股票", flush=True)
+
+        except Exception as e:
+            print(f"[更新进度] 获取{sector_name}股票列表失败: {str(e)}", flush=True)
+
+    # 获取指数成分股
+    for index_name, dict_key in index_components_mapping.items():
+        queue.put(("progress", f"正在获取{index_name}成分股..."))
+        print(f"[更新进度] 正在获取{index_name}成分股...", flush=True)
+        try:
+            components = xtdata.get_stock_list_in_sector(index_name)
+            if components:
+                print(f"[更新进度] 获取到 {len(components)} 只{index_name}成分股，正在处理详细信息...", flush=True)
+                for code in components:
+                    try:
+                        detail = xtdata.get_instrument_detail(code)
+                        if detail:
+                            if isinstance(detail, str):
+                                detail = ast.literal_eval(detail)
+                            name = detail.get('InstrumentName', '')
+                            if name:
+                                stock_info = {'code': code, 'name': name}
+                                stock_dict[dict_key].append(stock_info)
+                                stock_dict['all_stocks'].append(stock_info)
+                    except Exception as e:
+                        continue
+                print(f"[更新进度] {index_name} 完成，共获取 {len(stock_dict[dict_key])} 只有效成分股", flush=True)
+            else:
+                print(f"[更新进度] {index_name} 没有成分股", flush=True)
+        except Exception as e:
+            print(f"[更新进度] 获取{index_name}成分股列表失败: {str(e)}", flush=True)
+
+    # 获取沪深转债成分股
+    queue.put(("progress", "正在获取沪深转债..."))
+    print(f"[更新进度] 正在获取沪深转债...", flush=True)
+    try:
+        cb_stocks = xtdata.get_stock_list_in_sector('沪深转债')
+        if cb_stocks:
+            print(f"[更新进度] 获取到 {len(cb_stocks)} 只沪深转债，正在筛选转债...", flush=True)
+            for code in cb_stocks:
+                try:
+                    detail = xtdata.get_instrument_detail(code)
+                    if detail:
+                        if isinstance(detail, str):
+                            detail = ast.literal_eval(detail)
+                        name = detail.get('InstrumentName', '')
+                        if name and '转债' in name:
+                            bond_info = {'code': code, 'name': name}
+                            stock_dict['hs_convertible_bonds'].append(bond_info)
+                except Exception as e:
+                    continue
+            print(f"[更新进度] 沪深转债 完成，共获取 {len(stock_dict['hs_convertible_bonds'])} 只有效转债", flush=True)
+        else:
+            print(f"[更新进度] 沪深转债 没有证券", flush=True)
+    except Exception as e:
+        print(f"[更新进度] 获取沪深转债失败: {str(e)}", flush=True)
+
+    # 添加指数
+    stock_dict['indices'] = important_indices
+    for index in important_indices:
+        stock_dict['all_stocks'].append(index)
+
+    # 对每个板块去重并排序
+    for board in stock_dict:
+        if board == 'all_stocks':
+            unique_stocks = {stock['code']: stock for stock in stock_dict[board]}.values()
+            stock_dict[board] = sorted(unique_stocks, key=lambda x: x['code'])
+        else:
+            stock_dict[board].sort(key=lambda x: x['code'])
+
+    return stock_dict
+
+def save_stock_list_to_csv_for_subprocess(stock_dict, output_dir, queue):
+    """子进程版本的保存CSV函数，带进度反馈"""
+    import os
+    
+    os.makedirs(output_dir, exist_ok=True)
+
+    board_names = {
+        'sh_a': '上证A股',
+        'sz_a': '深证A股',
+        'gem': '创业板',
+        'sci': '科创板',
+        'hs_a': '沪深A股',
+        'indices': '指数',
+        'all_stocks': '全部股票',
+        'hs300_components': '沪深300成分股',
+        'zz500_components': '中证500成分股',
+        'sz50_components': '上证50成分股',
+        'hs_convertible_bonds': '沪深转债'
+    }
+
+    for board, stocks in stock_dict.items():
+        queue.put(("progress", f"正在保存{board_names[board]}列表..."))
+        print(f"[更新进度] 正在保存{board_names[board]}列表...", flush=True)
+        # 沪深转债使用特定文件名
+        if board == 'hs_convertible_bonds':
+            file_path = os.path.join(output_dir, "沪深转债_列表.csv")
+        else:
+            file_path = os.path.join(output_dir, f"{board_names[board]}_股票列表.csv")
+        with open(file_path, 'w', encoding='utf-8-sig') as f:
+            for stock in stocks:
+                f.write(f"{stock['code']},{stock['name']}\n")
+        print(f"[更新进度] {board_names[board]}列表保存完成，共 {len(stocks)} 只证券", flush=True)
+
+# 定义多进程版本的更新管理器类
+if not is_subprocess():
+    from PyQt5.QtCore import QObject, pyqtSignal, QTimer
+    import multiprocessing
+    import queue
+    
+    class StockListUpdateManager(QObject):
+        """多进程股票列表更新管理器"""
+        progress = pyqtSignal(str)  # 用于发送进度信息
+        finished = pyqtSignal(bool, str)  # 用于发送完成状态和消息
+
+        def __init__(self, output_dir):
+            super().__init__()
+            self.output_dir = output_dir
+            self.process = None
+            self.queue = None
+            self.timer = None
+            self.running = True
+
+        def start(self):
+            """启动多进程更新"""
+            try:
+                # Windows multiprocessing 配置
+                if hasattr(multiprocessing, 'set_start_method'):
+                    try:
+                        multiprocessing.set_start_method('spawn', force=True)
+                    except RuntimeError:
+                        pass  # 可能已经设置过了
+                
+                # 创建进程间通信队列
+                self.queue = multiprocessing.Queue()
+                
+                # 创建子进程
+                self.process = multiprocessing.Process(
+                    target=stock_list_worker,
+                    args=(self.output_dir, self.queue)
+                )
+                
+                # 启动子进程
+                self.process.start()
+                
+                # 创建定时器检查队列消息
+                self.timer = QTimer()
+                self.timer.timeout.connect(self.check_queue)
+                self.timer.start(100)  # 每100ms检查一次
+                
+            except Exception as e:
+                error_msg = f"启动多进程更新时出错: {str(e)}"
+                logging.error(error_msg, exc_info=True)
+                self.finished.emit(False, error_msg)
+
+        def check_queue(self):
+            """检查进程队列中的消息"""
+            try:
+                while True:
+                    try:
+                        # 非阻塞获取消息
+                        message = self.queue.get_nowait()
+                        
+                        if message[0] == "progress":
+                            # 进度消息
+                            self.progress.emit(message[1])
+                        elif message[0] == "finished":
+                            # 完成消息
+                            success, msg = message[1], message[2]
+                            self.stop()
+                            self.finished.emit(success, msg)
+                            break
+                            
+                    except queue.Empty:
+                        break
+                        
+                # 检查进程是否还在运行
+                if self.process and not self.process.is_alive():
+                    # 进程已结束，但没有收到完成消息，可能是异常结束
+                    exit_code = self.process.exitcode
+                    if exit_code != 0:
+                        self.stop()
+                        self.finished.emit(False, f"更新进程异常结束，退出码: {exit_code}")
+                        
+            except Exception as e:
+                logging.error(f"检查队列消息时出错: {str(e)}")
+
+        def stop(self):
+            """停止更新进程"""
+            self.running = False
+            
+            if self.timer:
+                self.timer.stop()
+                self.timer = None
+                
+            if self.process and self.process.is_alive():
+                self.process.terminate()
+                self.process.join(timeout=5)  # 等待5秒
+                if self.process.is_alive():
+                    self.process.kill()  # 强制结束
+                    
+            self.process = None
+            self.queue = None
+
 def get_and_save_stock_list(output_dir):
-    """获取并保存股票列表的便捷函数，返回更新线程实例"""
+    """获取并保存股票列表的便捷函数，返回多进程更新管理器实例"""
     # 检查是否在主进程中
     if not is_subprocess():
-        update_thread = StockListUpdateThread(output_dir)
-        update_thread.start()
-        return update_thread
+        # 在主进程中使用多进程管理器
+        update_manager = StockListUpdateManager(output_dir)
+        return update_manager
     else:
-        # 在子进程中直接执行，不使用Qt线程
+        # 在子进程中直接执行，不使用Qt相关功能
         try:
-            xtdata.download_sector_data()
+            from xtquant import xtdata
             stock_dict = get_stock_list()
             save_stock_list_to_csv(stock_dict, output_dir)
             return True, "股票列表更新成功！"
@@ -1369,19 +1729,30 @@ else:
             if not self.running:
                 return
 
-            self.progress.emit("正在初始化客户端连接...")
+            progress_msg = "正在初始化客户端连接..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
             # c = get_client()
             # if not c.connect():
             #     raise Exception("无法连接到 miniQMT 客户端")
 
-            self.progress.emit("正在下载板块数据...")
+            progress_msg = "正在下载板块数据..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
             xtdata.download_sector_data()
+            print("[更新进度] 板块数据下载完成", flush=True)
 
-            self.progress.emit("正在获取股票列表...")
+            progress_msg = "正在获取股票列表..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
             stock_dict = self.get_stock_list()
+            print("[更新进度] 股票列表获取完成", flush=True)
 
-            self.progress.emit("正在保存股票列表...")
+            progress_msg = "正在保存股票列表..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
             self.save_stock_list_to_csv(stock_dict)
+            print("[更新进度] 股票列表保存完成", flush=True)
 
             if self.running:
                 self.finished.emit(True, "股票列表更新成功！")
@@ -1408,6 +1779,7 @@ else:
             'hs300_components': [],  # 沪深300成分股
             'zz500_components': [],  # 中证500成分股
             'sz50_components': [],   # 上证50成分股
+            'hs_convertible_bonds': [],  # 沪深转债
         }
 
         # 重要指数列表
@@ -1442,10 +1814,14 @@ else:
             if not self.running:
                 return stock_dict
 
-            self.progress.emit(f"正在获取{sector_name}股票列表...")
+            progress_msg = f"正在获取{sector_name}股票列表..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
             try:
                 stocks = xtdata.get_stock_list_in_sector(sector_name)
                 if stocks:
+                    print(f"[更新进度] 获取到 {len(stocks)} 只{sector_name}股票，正在处理详细信息...", flush=True)
+                    processed_count = 0
                     for code in stocks:
                         if not self.running:
                             return stock_dict
@@ -1460,22 +1836,34 @@ else:
                                     stock_dict[dict_key].append(stock_info)
                                     if dict_key != 'hs_a':
                                         stock_dict['all_stocks'].append(stock_info)
+                                    processed_count += 1
+                                    # 每处理100只股票输出一次进度
+                                    if processed_count % 100 == 0:
+                                        print(f"[更新进度] {sector_name} 已处理 {processed_count}/{len(stocks)} 只股票", flush=True)
                         except Exception as e:
                             logging.error(f"处理股票 {code} 时出错: {str(e)}")
                             continue
+                    
+                    print(f"[更新进度] {sector_name} 完成，共获取 {len(stock_dict[dict_key])} 只有效股票", flush=True)
+                else:
+                    print(f"[更新进度] {sector_name} 板块没有股票", flush=True)
 
             except Exception as e:
                 logging.error(f"获取{sector_name}股票列表时出错: {str(e)}")
+                print(f"[更新进度] 获取{sector_name}股票列表失败: {str(e)}", flush=True)
 
         # 获取指数成分股
         for index_name, dict_key in index_components_mapping.items():
             if not self.running:
                 return stock_dict
 
-            self.progress.emit(f"正在获取{index_name}成分股...")
+            progress_msg = f"正在获取{index_name}成分股..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
             try:
                 components = xtdata.get_stock_list_in_sector(index_name)
                 if components:
+                    print(f"[更新进度] 获取到 {len(components)} 只{index_name}成分股，正在处理详细信息...", flush=True)
                     for code in components:
                         if not self.running:
                             return stock_dict
@@ -1492,8 +1880,49 @@ else:
                         except Exception as e:
                             logging.error(f"处理{index_name}成分股 {code} 时出错: {str(e)}")
                             continue
+                    print(f"[更新进度] {index_name} 完成，共获取 {len(stock_dict[dict_key])} 只有效成分股", flush=True)
+                else:
+                    print(f"[更新进度] {index_name} 没有成分股", flush=True)
             except Exception as e:
                 logging.error(f"获取{index_name}成分股列表时出错: {str(e)}")
+                print(f"[更新进度] 获取{index_name}成分股列表失败: {str(e)}", flush=True)
+
+        # 获取沪深转债成分股
+        convertible_bonds_mapping = {
+            '沪深转债': 'hs_convertible_bonds'
+        }
+        
+        for cb_name, dict_key in convertible_bonds_mapping.items():
+            if not self.running:
+                return stock_dict
+                
+            progress_msg = f"正在获取{cb_name}..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
+            try:
+                cb_stocks = xtdata.get_stock_list_in_sector(cb_name)
+                if cb_stocks:
+                    print(f"[更新进度] 获取到 {len(cb_stocks)} 只{cb_name}，正在筛选转债...", flush=True)
+                    for code in cb_stocks:
+                        if not self.running:
+                            return stock_dict
+                        try:
+                            detail = xtdata.get_instrument_detail(code)
+                            if detail:
+                                if isinstance(detail, str):
+                                    detail = ast.literal_eval(detail)
+                                name = detail.get('InstrumentName', '')
+                                if name and '转债' in name:
+                                    bond_info = {'code': code, 'name': name}
+                                    stock_dict[dict_key].append(bond_info)
+                                    # 不将转债添加到all_stocks中，因为它们是债券而非股票
+                        except Exception as e:
+                            continue
+                    print(f"[更新进度] {cb_name} 完成，共获取 {len(stock_dict[dict_key])} 只有效转债", flush=True)
+                else:
+                    print(f"[更新进度] {cb_name} 没有证券", flush=True)
+            except Exception as e:
+                print(f"[更新进度] 获取{cb_name}失败: {str(e)}", flush=True)
 
         # 添加指数
         stock_dict['indices'] = important_indices
@@ -1524,17 +1953,25 @@ else:
             'all_stocks': '全部股票',
             'hs300_components': '沪深300成分股',
             'zz500_components': '中证500成分股',
-            'sz50_components': '上证50成分股'
+            'sz50_components': '上证50成分股',
+            'hs_convertible_bonds': '沪深转债'
         }
 
         for board, stocks in stock_dict.items():
             if not self.running:
                 return
-            self.progress.emit(f"正在保存{board_names[board]}列表...")
-            file_path = os.path.join(self.output_dir, f"{board_names[board]}_股票列表.csv")
+            progress_msg = f"正在保存{board_names[board]}列表..."
+            self.progress.emit(progress_msg)
+            print(f"[更新进度] {progress_msg}", flush=True)
+            # 沪深转债使用特定文件名
+            if board == 'hs_convertible_bonds':
+                file_path = os.path.join(self.output_dir, "沪深转债_列表.csv")
+            else:
+                file_path = os.path.join(self.output_dir, f"{board_names[board]}_股票列表.csv")
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 for stock in stocks:
                     f.write(f"{stock['code']},{stock['name']}\n")
+            print(f"[更新进度] {board_names[board]}列表保存完成，共 {len(stocks)} 只证券", flush=True)
 
 def supplement_history_data(stock_files, field_list, period_type, start_date, end_date, dividend_type='none', time_range='all', progress_callback=None, log_callback=None, check_interrupt=None):
     """

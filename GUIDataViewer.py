@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayout
                              QWidget, QTreeWidget, QTreeWidgetItem, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QMessageBox, QLabel,
                              QSplitter, QProgressBar, QStatusBar, QPushButton, QSizePolicy, QDialog, QDesktopWidget,
-                             QComboBox, QDateEdit, QGroupBox, QCheckBox, QGridLayout, QTextEdit, QFileDialog, QInputDialog)
+                             QComboBox, QDateEdit, QGroupBox, QCheckBox, QGridLayout, QTextEdit, QFileDialog, QInputDialog, QScrollArea)
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QEvent, QDate, QMutex, QTimer
 from PyQt5.QtGui import QIcon, QFont, QColor
 import pandas as pd
@@ -249,25 +249,18 @@ def supplement_data_worker(params, progress_queue, result_queue, stop_event):
             check_interrupt=check_interrupt
         )
         
-        # 构建详细的完成消息
+        # 构建详细的完成消息（改为单行汇总，避免换行）
         total = supplement_stats['success_count'] + supplement_stats['empty_data_count'] + supplement_stats['error_count']
-        result_message = "数据补充完成！\n"
-        
-        result_message += f"总股票数: {total}\n"
-        result_message += f"成功补充: {supplement_stats['success_count']} 只股票\n"
-        
-        if supplement_stats['empty_data_count'] > 0:
-            result_message += f"数据为空（无新数据）: {supplement_stats['empty_data_count']} 只股票\n"
-            if len(supplement_stats['empty_stocks']) <= 10:
-                result_message += f"数据为空的股票: {', '.join(supplement_stats['empty_stocks'])}\n"
-            else:
-                result_message += f"数据为空的股票(前10个): {', '.join(supplement_stats['empty_stocks'][:10])}...\n"
-        
-        if supplement_stats['error_count'] > 0:
-            result_message += f"处理出错: {supplement_stats['error_count']} 只股票\n"
-        
-        if supplement_stats['success_count'] == 0 and supplement_stats['empty_data_count'] > 0:
-            result_message += "\n注意: 所有股票都没有新数据可补充，可能数据已最新或日期范围无数据。"
+        parts = [
+            "数据补充完成！",
+            f"总股票数: {total}",
+            f"成功补充: {supplement_stats['success_count']} 只股票"
+        ]
+        if supplement_stats['empty_data_count']:
+            parts.append(f"空数据: {supplement_stats['empty_data_count']}")
+        if supplement_stats['error_count']:
+            parts.append(f"出错: {supplement_stats['error_count']}")
+        result_message = "；".join(parts)
         
         # 发送完成信号
         result_queue.put(('success', result_message.strip()))
@@ -450,6 +443,9 @@ class GUIDataViewer(QMainWindow):
         self.data_thread = None
         self.qmt_path = ''  # miniQMT路径
         
+        # 检测屏幕分辨率并设置字体缩放
+        self.font_scale = self.detect_screen_resolution()
+        
         # 数据补充相关
         self.supplement_thread = None
         
@@ -461,7 +457,298 @@ class GUIDataViewer(QMainWindow):
         
         self.initUI()
         self.load_data_structure()
+        # 在界面完全构建后，清理局部字体并统一应用缩放样式
+        QTimer.singleShot(0, self.apply_scaled_styles)
     
+    def detect_screen_resolution(self):
+        """检测屏幕分辨率并返回字体缩放比例"""
+        screen = QDesktopWidget().screenGeometry()
+        width = screen.width()
+        height = screen.height()
+        
+        # 根据屏幕宽度确定字体缩放比例（与主界面保持一致）
+        if width >= 3840:  # 4K及以上分辨率
+            return 1.8
+        elif width >= 2560:  # 2K分辨率
+            return 1.4
+        elif width >= 1920:  # 1080P分辨率
+            return 1.0
+        else:  # 低分辨率
+            return 0.8
+
+    def get_scaled_stylesheet(self):
+        """获取根据分辨率缩放的样式表"""
+        # 基础字体大小
+        base_sizes = {
+            'small': 12,
+            'normal': 14, 
+            'large': 16,
+            'xl': 18,
+            'xxl': 24,
+            'xxxl': 30
+        }
+        
+        # 计算缩放后的字体大小
+        scaled_sizes = {k: int(v * self.font_scale) for k, v in base_sizes.items()}
+        
+        return f"""
+            /* 主窗口和基础样式 */
+            QMainWindow {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            QWidget {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 分组框样式 */
+            QGroupBox {{
+                background-color: #333333;
+                border: 1px solid #404040;
+                border-radius: 6px;
+                margin-top: 1em;
+                padding-top: 1em;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #e8e8e8;
+                font-weight: bold;
+                background-color: #333333;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 标签样式 */
+            QLabel {{
+                color: #e8e8e8;
+                background-color: transparent;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 输入框样式 */
+            QLineEdit {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 5px;
+                color: #e8e8e8;
+                selection-background-color: #666666;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 按钮样式 */
+            QPushButton {{
+                background-color: #505050;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                color: #e8e8e8;
+                min-width: 80px;
+                font-weight: bold;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            QPushButton:hover {{
+                background-color: #606060;
+            }}
+            QPushButton:pressed {{
+                background-color: #454545;
+            }}
+            QPushButton:disabled {{
+                background-color: #404040;
+                color: #808080;
+            }}
+            
+            /* 下拉框样式 */
+            QComboBox {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 5px;
+                color: #e8e8e8;
+                min-width: 100px;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 表格样式 */
+            QTableWidget {{
+                background-color: #2b2b2b;
+                alternate-background-color: #333333;
+                color: #e8e8e8;
+                gridline-color: #404040;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            QTableWidget::item {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                padding: 8px;
+                border-bottom: 1px solid #404040;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 树形控件样式 */
+            QTreeWidget {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                border: 1px solid #404040;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            QTreeWidget::item {{
+                padding: 5px;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 文本编辑器样式 */
+            QTextEdit {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                border: 1px solid #404040;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 进度条样式 */
+            QProgressBar {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 5px;
+                text-align: center;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 状态栏样式 */
+            QStatusBar {{
+                background-color: #333333;
+                color: #e8e8e8;
+                border-top: 1px solid #4d4d4d;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+        """
+
+    def get_complete_scaled_stylesheet(self):
+        """获取包含强制覆盖的完整缩放样式表"""
+        # 计算缩放后的字体大小和控件尺寸
+        font_14 = int(14 * self.font_scale)
+        font_16 = int(16 * self.font_scale)
+        font_12 = int(12 * self.font_scale)
+        font_13 = int(13 * self.font_scale)
+        
+        # 计算控件高度（基于字体大小）
+        button_height = max(30, int(30 * self.font_scale))
+        input_height = max(25, int(25 * self.font_scale))
+        combo_height = max(25, int(25 * self.font_scale))
+        
+        # 基础样式表
+        base_style = self.get_scaled_stylesheet()
+        
+        # 强制覆盖样式，包含高度调整
+        override_style = f"""
+            /* 强制字体大小覆盖 */
+            * {{ font-size: {font_14}px !important; }}
+            QLabel {{ font-size: {font_14}px !important; min-height: {input_height}px; }}
+            QPushButton {{ 
+                font-size: {font_14}px !important; 
+                min-height: {button_height}px;
+                padding: {max(4, int(4 * self.font_scale))}px {max(8, int(8 * self.font_scale))}px;
+            }}
+            /* 复选框：同步主界面的完整样式，确保间距和尺寸正确缩放 */
+            QCheckBox {{
+                spacing: {max(5, int(5 * self.font_scale))}px;
+                padding: {max(5, int(5 * self.font_scale))}px 0;
+            }}
+            QCheckBox::indicator {{
+                width: {max(20, int(20 * self.font_scale))}px;
+                height: {max(20, int(20 * self.font_scale))}px;
+            }}
+            QComboBox {{ 
+                font-size: {font_14}px !important; 
+                min-height: {combo_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QLineEdit {{ 
+                font-size: {font_14}px !important; 
+                min-height: {input_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QTableWidget {{ font-size: {font_14}px !important; }}
+            QTableWidget::item {{ 
+                font-size: {font_14}px !important; 
+                padding: {max(4, int(4 * self.font_scale))}px;
+                min-height: {max(20, int(20 * self.font_scale))}px;
+            }}
+            QTreeWidget {{ font-size: {font_14}px !important; }}
+            QTreeWidget::item {{ 
+                font-size: {font_14}px !important; 
+                padding: {max(3, int(3 * self.font_scale))}px;
+                min-height: {max(18, int(18 * self.font_scale))}px;
+            }}
+            QTextEdit {{ font-size: {font_14}px !important; }}
+            QProgressBar {{ 
+                font-size: {font_14}px !important; 
+                min-height: {max(16, int(16 * self.font_scale))}px;
+            }}
+            QStatusBar {{ font-size: {font_14}px !important; }}
+            QHeaderView::section {{ 
+                font-size: {font_14}px !important; 
+                min-height: {max(25, int(25 * self.font_scale))}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QCheckBox {{ 
+                font-size: {font_14}px !important; 
+                min-height: {max(16, int(16 * self.font_scale))}px;
+            }}
+            QDateEdit, QTimeEdit {{ 
+                font-size: {font_14}px !important; 
+                min-height: {combo_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QSpinBox, QDoubleSpinBox {{ 
+                font-size: {font_14}px !important; 
+                min-height: {input_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QGroupBox {{ 
+                font-size: {font_14}px !important; 
+                padding-top: {max(15, int(15 * self.font_scale))}px;
+            }}
+            QGroupBox::title {{ 
+                font-size: {font_14}px !important; 
+                padding: {max(3, int(3 * self.font_scale))}px {max(5, int(5 * self.font_scale))}px;
+                background-color: transparent; /* 与主背景一致，消除标题底色块 */
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+            }}
+        """
+        
+        return base_style + override_style
+
+    def get_scaled_font_style(self, base_size):
+        """获取缩放后的字体大小样式"""
+        scaled_size = int(base_size * self.font_scale)
+        return f"font-size: {scaled_size}px;"
+
+    def apply_scaled_styles(self):
+        """在界面构建完成后，统一清理并应用缩放样式，避免被局部样式覆盖"""
+        # 1) 递归移除所有子控件样式中的 font-size
+        try:
+            from PyQt5.QtWidgets import QWidget
+            import re
+            for child in self.findChildren(QWidget):
+                if hasattr(child, 'styleSheet'):
+                    ss = child.styleSheet() or ''
+                    if 'font-size' in ss:
+                        ss = re.sub(r"font-size\s*:\s*\d+px;?", "", ss)
+                        child.setStyleSheet(ss)
+        except Exception:
+            pass
+        # 2) 重新应用完整缩放样式表
+        self.setStyleSheet(self.get_complete_scaled_stylesheet())
+
     def get_icon_path(self, icon_name):
         """获取图标文件的正确路径"""
         if getattr(sys, 'frozen', False):
@@ -515,7 +802,7 @@ class GUIDataViewer(QMainWindow):
             except Exception as e:
                 logging.warning(f"设置标题栏深色模式失败: {str(e)}")
         
-        self.setWindowTitle("本地数据管理模块 - 看海量化交易系统")
+        self.setWindowTitle("本地数据管理模块 - 看海量化回测系统")
         self.setGeometry(100, 100, 1540, 800)  # 进一步增加宽度以适应优化后的左侧面板
         
         # 将窗口居中显示
@@ -533,10 +820,12 @@ class GUIDataViewer(QMainWindow):
             else:
                 logging.warning(f"图标文件不存在: {icon_file} 和 {icon_file_png}")
         
+        # 在界面创建前就设置完整的样式表，避免闪烁
+        self.setStyleSheet(self.get_complete_scaled_stylesheet())
+        
         # 创建中心部件
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
-        central_widget.setStyleSheet("background-color: #2b2b2b;")
         self.setCentralWidget(central_widget)
         
         # 创建主布局
@@ -544,15 +833,78 @@ class GUIDataViewer(QMainWindow):
         
         # 创建分割器
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setStyleSheet("background-color: #2b2b2b;")
+        splitter.setStyleSheet("""
+            QSplitter {
+                background-color: #2b2b2b;
+            }
+            QSplitter::handle {
+                background-color: #404040;
+                width: 3px;
+                margin: 2px;
+                border-radius: 1px;
+            }
+            QSplitter::handle:hover {
+                background-color: #505050;
+            }
+            QSplitter::handle:pressed {
+                background-color: #606060;
+            }
+        """)
         
-        # 创建左侧数据补充工具
+        # 创建左侧数据补充工具（带滚动区域）
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # 需要时显示水平滚动条
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)    # 需要时显示垂直滚动条
+        scroll_area.setMinimumWidth(300)  # 设置最小宽度而不是固定宽度，允许拖动调节
+        scroll_area.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        
+        # 设置滚动区域样式
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: #2b2b2b;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #404040;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #666666;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #777777;
+            }
+            QScrollBar:horizontal {
+                background-color: #404040;
+                height: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #666666;
+                border-radius: 6px;
+                min-width: 20px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #777777;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                border: none;
+                background: none;
+            }
+        """)
+        
         supplement_widget = self.create_supplement_widget()
-        supplement_widget.setFixedWidth(460)  # 增加宽度以适应更大的字体和更好的布局
+        scroll_area.setWidget(supplement_widget)
         
         # 创建中间树形控件区域
         tree_container = QWidget()
-        tree_container.setFixedWidth(280)
+        tree_container.setMinimumWidth(280)  # 设置最小宽度而不是固定宽度，允许拖动调节
+        tree_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         tree_layout = QVBoxLayout(tree_container)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.setSpacing(5)
@@ -565,13 +917,13 @@ class GUIDataViewer(QMainWindow):
         
         # 添加标题标签
         tree_title_label = QLabel("数据结构")
-        tree_title_label.setStyleSheet("""
-            QLabel {
+        tree_title_label.setStyleSheet(f"""
+            QLabel {{
                 color: #e8e8e8;
                 font-weight: bold;
-                font-size: 16px;
+                {self.get_scaled_font_style(16)}
                 padding: 5px;
-            }
+            }}
         """)
         tree_header_layout.addWidget(tree_title_label)
         
@@ -627,6 +979,10 @@ class GUIDataViewer(QMainWindow):
                 font-size: 16px;
             }
         """)
+        
+        # 设置树形控件的滚动策略
+        self.tree_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # 需要时显示水平滚动条
+        self.tree_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)    # 需要时显示垂直滚动条
         
         # 设置树形控件样式
         self.tree_widget.setStyleSheet("""
@@ -700,8 +1056,36 @@ class GUIDataViewer(QMainWindow):
             QTreeWidget::branch:open:has-children:has-siblings:hover {
                 border-top-color: #cccccc;
             }
-            QTreeWidget QScrollBar {
-                background-color: #333333;
+            QTreeWidget QScrollBar:horizontal {
+                background-color: #404040;
+                height: 12px;
+                border-radius: 6px;
+            }
+            QTreeWidget QScrollBar::handle:horizontal {
+                background-color: #666666;
+                border-radius: 6px;
+                min-width: 20px;
+            }
+            QTreeWidget QScrollBar::handle:horizontal:hover {
+                background-color: #777777;
+            }
+            QTreeWidget QScrollBar:vertical {
+                background-color: #404040;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QTreeWidget QScrollBar::handle:vertical {
+                background-color: #666666;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QTreeWidget QScrollBar::handle:vertical:hover {
+                background-color: #777777;
+            }
+            QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical,
+            QTreeWidget QScrollBar::add-line:horizontal, QTreeWidget QScrollBar::sub-line:horizontal {
+                border: none;
+                background: none;
             }
             QTreeWidget QHeaderView {
                 background-color: #333333;
@@ -894,12 +1278,15 @@ class GUIDataViewer(QMainWindow):
         self.setup_table_mouse_events()
         
         # 添加到分割器
-        splitter.addWidget(supplement_widget)
+        splitter.addWidget(scroll_area)
         splitter.addWidget(tree_container)
         splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 0)  # 左侧数据补充工具固定宽度
-        splitter.setStretchFactor(1, 0)  # 中间树形控件固定宽度
-        splitter.setStretchFactor(2, 1)  # 右侧数据展示区可伸缩
+        
+        # 设置初始比例和拉伸因子，使三个区域都可以调节大小
+        splitter.setSizes([460, 350, 800])  # 设置初始宽度比例
+        splitter.setStretchFactor(0, 1)  # 左侧数据补充工具可调节
+        splitter.setStretchFactor(1, 1)  # 中间树形控件可调节  
+        splitter.setStretchFactor(2, 2)  # 右侧数据展示区拉伸因子更大，优先伸缩
         
         main_layout.addWidget(splitter)
         
@@ -912,8 +1299,13 @@ class GUIDataViewer(QMainWindow):
         self.progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self.progress_bar)
         
-        # 设置整体样式
-        self.setStyleSheet("""
+        # 重新应用完整缩放样式表（确保不被覆盖）
+        self.setStyleSheet(self.get_complete_scaled_stylesheet())
+        
+        # 原有样式注释掉，已整合到完整样式表中
+        """
+        # 注释掉原有的硬编码样式，避免覆盖缩放样式表
+        self.setStyleSheet('''
             /* 主窗口和基础样式 */
             QMainWindow {
                 background-color: #2b2b2b;
@@ -1057,7 +1449,8 @@ class GUIDataViewer(QMainWindow):
             QTreeWidget QHeaderView::section:pressed {
                 background-color: #505050 !important;
             }
-        """)
+        ''')
+        """
         
     def load_data_structure(self):
         """加载数据结构"""
@@ -1210,36 +1603,36 @@ class GUIDataViewer(QMainWindow):
         if is_current:
             # 当前项显示为普通标签
             label = QLabel(text)
-            label.setStyleSheet("""
-                QLabel {
+            label.setStyleSheet(f"""
+                QLabel {{
                     color: #ffffff;
-                    font-size: 14px;
+                    font-size: {int(14 * self.font_scale)}px;
                     font-weight: bold;
-                    padding: 6px 10px;
+                    padding: {int(6 * self.font_scale)}px {int(10 * self.font_scale)}px;
                     background-color: #555555;
                     border-radius: 4px;
-                }
+                }}
             """)
             return label
         else:
             # 可点击的项显示为按钮
             btn = QPushButton(text)
-            btn.setStyleSheet("""
-                QPushButton {
+            btn.setStyleSheet(f"""
+                QPushButton {{
                     color: #4A90E2;
-                    font-size: 14px;
+                    font-size: {int(14 * self.font_scale)}px;
                     border: none;
-                    padding: 6px 10px;
+                    padding: {int(6 * self.font_scale)}px {int(10 * self.font_scale)}px;
                     background-color: transparent;
                     text-decoration: underline;
-                }
-                QPushButton:hover {
+                }}
+                QPushButton:hover {{
                     background-color: #505050;
                     border-radius: 4px;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #555555;
-                }
+                }}
             """)
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda: self.on_breadcrumb_clicked(data))
@@ -2502,6 +2895,7 @@ class GUIDataViewer(QMainWindow):
             'hs300': '沪深300成分股',
             'sz50': '上证50成分股',
             'indices': '常用指数',
+            'convertible_bonds': '沪深转债',
             'custom': '自选清单'
         }
         
@@ -2557,7 +2951,7 @@ class GUIDataViewer(QMainWindow):
                 grid_layout.addWidget(checkbox, row, col)
                 
                 col += 1
-                if col >= 3:  # 改为3列布局
+                if col >= 1:  # 最终方案：改为1列布局
                     col = 0
                     row += 1
         
@@ -2568,14 +2962,14 @@ class GUIDataViewer(QMainWindow):
         button_layout.setSpacing(10)  # 增加按钮间距
         
         add_custom_button = QPushButton("添加自定义列表")
-        add_custom_button.setMinimumHeight(35)  # 设置最小高度
+        add_custom_button.setMinimumHeight(28)  # 减小最小高度
         add_custom_button.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
                 color: #e8e8e8;
                 border: 1px solid #4d4d4d;
                 border-radius: 3px;
-                padding: 8px;
+                padding: 4px 8px;
                 font-size: 14px;
             }
             QPushButton:hover {
@@ -2589,14 +2983,14 @@ class GUIDataViewer(QMainWindow):
         button_layout.addWidget(add_custom_button)
         
         clear_button = QPushButton("清空")
-        clear_button.setMinimumHeight(35)  # 设置最小高度
+        clear_button.setMinimumHeight(28)  # 减小最小高度
         clear_button.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
                 color: #e8e8e8;
                 border: 1px solid #4d4d4d;
                 border-radius: 3px;
-                padding: 8px;
+                padding: 4px 8px;
                 font-size: 14px;
             }
             QPushButton:hover {
@@ -2699,14 +3093,14 @@ class GUIDataViewer(QMainWindow):
         
         # 添加股票按钮
         add_stock_button = QPushButton("添加股票")
-        add_stock_button.setMinimumHeight(35)
+        add_stock_button.setMinimumHeight(28)
         add_stock_button.setStyleSheet("""
             QPushButton {
                 background-color: #007acc;
                 color: #ffffff;
                 border: none;
                 border-radius: 3px;
-                padding: 8px;
+                padding: 4px 8px;
                 font-size: 14px;
                 font-weight: bold;
             }
@@ -2722,14 +3116,14 @@ class GUIDataViewer(QMainWindow):
         
         # 导入股票按钮
         import_stock_button = QPushButton("导入文件")
-        import_stock_button.setMinimumHeight(35)
+        import_stock_button.setMinimumHeight(28)
         import_stock_button.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
                 color: #e8e8e8;
                 border: 1px solid #4d4d4d;
                 border-radius: 3px;
-                padding: 8px;
+                padding: 4px 8px;
                 font-size: 14px;
             }
             QPushButton:hover {
@@ -2748,14 +3142,14 @@ class GUIDataViewer(QMainWindow):
         
         # 删除选中按钮
         delete_stock_button = QPushButton("删除选中")
-        delete_stock_button.setMinimumHeight(35)
+        delete_stock_button.setMinimumHeight(28)
         delete_stock_button.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
                 color: #e8e8e8;
                 border: 1px solid #4d4d4d;
                 border-radius: 3px;
-                padding: 8px;
+                padding: 4px 8px;
                 font-size: 14px;
             }
             QPushButton:hover {
@@ -2770,14 +3164,14 @@ class GUIDataViewer(QMainWindow):
         
         # 清空列表按钮
         clear_stock_button = QPushButton("清空列表")
-        clear_stock_button.setMinimumHeight(35)
+        clear_stock_button.setMinimumHeight(28)
         clear_stock_button.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
                 color: #e8e8e8;
                 border: 1px solid #4d4d4d;
                 border-radius: 3px;
-                padding: 8px;
+                padding: 4px 8px;
                 font-size: 14px;
             }
             QPushButton:hover {
@@ -2922,23 +3316,23 @@ class GUIDataViewer(QMainWindow):
         
         # 补充数据按钮
         self.supplement_button = QPushButton("补充数据")
-        self.supplement_button.setMinimumHeight(35)
-        self.supplement_button.setStyleSheet("""
-            QPushButton {
+        self.supplement_button.setMinimumHeight(int(28 * self.font_scale))
+        self.supplement_button.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #007acc;
                 color: #ffffff;
                 border: none;
                 border-radius: 5px;
-                padding: 8px;
-                font-size: 14px;
+                padding: {int(8 * self.font_scale)}px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #0088dd;
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: #0066aa;
-            }
+            }}
         """)
         self.supplement_button.clicked.connect(self.supplement_data)
         supplement_layout.addWidget(self.supplement_button)
@@ -3088,6 +3482,8 @@ class GUIDataViewer(QMainWindow):
                         filename = os.path.join(data_dir, "创业板_股票列表.csv")
                     elif stock_type == 'sci':
                         filename = os.path.join(data_dir, "科创板_股票列表.csv")
+                    elif stock_type == 'convertible_bonds':
+                        filename = os.path.join(data_dir, "沪深转债_列表.csv")
                     elif stock_type == 'custom':
                         filename = self.get_custom_list_path()
                     
@@ -3166,23 +3562,24 @@ class GUIDataViewer(QMainWindow):
             # 更新按钮状态为红色停止按钮
             self.supplement_button.setText("停止补充")
             self.supplement_button.setEnabled(True)
-            self.supplement_button.setStyleSheet("""
-                QPushButton {
+            self.supplement_button.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #dc3545;
                     color: #ffffff;
                     border: none;
                     border-radius: 5px;
-                    padding: 8px;
-                    font-size: 14px;
+                    padding: {int(8 * self.font_scale)}px;
+                    font-size: {int(14 * self.font_scale)}px;
                     font-weight: bold;
-                }
-                QPushButton:hover {
+                }}
+                QPushButton:hover {{
                     background-color: #c82333;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #bd2130;
-                }
+                }}
             """)
+            self.supplement_button.setMinimumHeight(int(28 * self.font_scale))
 
             # 设置进度条
             self.supplement_progress_bar.setVisible(True)
@@ -3257,7 +3654,7 @@ class GUIDataViewer(QMainWindow):
             QMessageBox.information(self, "成功", message)
         else:
             self.supplement_status_label.setText("补充数据失败")
-            QMessageBox.warning(self, "失败", message)
+            QMessageBox.warning(self, "失败", f"补充数据失败: {message}")
 
     def handle_supplement_error(self, error_msg):
         """处理补充数据错误"""
@@ -3287,24 +3684,26 @@ class GUIDataViewer(QMainWindow):
         """重置补充数据按钮"""
         self.supplement_button.setText("补充数据")
         self.supplement_button.setEnabled(True)
-        # 恢复原来的蓝色样式
-        self.supplement_button.setStyleSheet("""
-            QPushButton {
+        # 恢复原来的蓝色样式，使用缩放后的字号和内边距
+        self.supplement_button.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #007acc;
                 color: #ffffff;
                 border: none;
                 border-radius: 5px;
-                padding: 8px;
-                font-size: 14px;
+                padding: {int(8 * self.font_scale)}px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #0088dd;
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: #0066aa;
-            }
+            }}
         """)
+        # 确保最小高度也正确设置
+        self.supplement_button.setMinimumHeight(int(28 * self.font_scale))
 
     def add_single_stock(self):
         """手动添加单只股票"""

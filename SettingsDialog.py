@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import webbrowser
 from PyQt5.QtWidgets import (
@@ -22,7 +23,7 @@ except ImportError:
             "version": "1.0.0",
             "build_date": "2023-01-01",
             "channel": "stable",
-            "app_name": "看海量化回测平台"
+            "app_name": "看海量化交易平台"
         }
 
 class SettingsDialog(QDialog):
@@ -41,6 +42,36 @@ class SettingsDialog(QDialog):
     
     def initUI(self):
         """设置对话框UI初始化"""
+        # 设置窗口标题栏颜色（仅适用于Windows）
+        if sys.platform == 'win32':
+            try:
+                from ctypes import windll, c_int, byref, sizeof
+                from ctypes.wintypes import DWORD
+
+                # 定义必要的Windows API常量
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                DWMWA_CAPTION_COLOR = 35  # 标题栏颜色
+                
+                # 启用深色模式
+                windll.dwmapi.DwmSetWindowAttribute(
+                    int(self.winId()),
+                    DWMWA_USE_IMMERSIVE_DARK_MODE,
+                    byref(c_int(2)),  # 2 means true
+                    sizeof(c_int)
+                )
+                
+                # 设置标题栏颜色
+                caption_color = DWORD(0x2b2b2b)  # 使用与主界面相同的颜色
+                windll.dwmapi.DwmSetWindowAttribute(
+                    int(self.winId()),
+                    DWMWA_CAPTION_COLOR,
+                    byref(caption_color),
+                    sizeof(caption_color)
+                )
+
+            except Exception as e:
+                logging.warning(f"设置标题栏深色模式失败: {str(e)}")
+        
         self.setWindowTitle('软件设置')
         self.setMinimumWidth(500)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
@@ -419,7 +450,6 @@ class SettingsDialog(QDialog):
         
         # 添加反馈问题按钮（靠左）
         feedback_button = QPushButton("反馈问题")
-        feedback_button.setFixedWidth(100)
         feedback_button.setStyleSheet("""
             QPushButton {
                 background-color: #2D2D2D;
@@ -440,7 +470,6 @@ class SettingsDialog(QDialog):
         
         # 保存和关闭按钮（靠右）
         save_button = QPushButton("保存设置")
-        save_button.setFixedWidth(100)
         save_button.setStyleSheet("""
             QPushButton {
                 background-color: #0078D7;
@@ -456,7 +485,6 @@ class SettingsDialog(QDialog):
         save_button.clicked.connect(self.save_settings)
         
         close_button = QPushButton("关闭")
-        close_button.setFixedWidth(100)
         close_button.setStyleSheet("""
             QPushButton {
                 background-color: #3D3D3D;
@@ -544,7 +572,7 @@ class SettingsDialog(QDialog):
 
     def open_feedback_page(self):
         """打开反馈问题页面"""
-        url = "https://khsci.com/khQuant/feedback"
+        url = "https://khsci.com/khQuant/forum/"
         webbrowser.open(url)
         
     def update_stock_list(self):
@@ -564,15 +592,18 @@ class SettingsDialog(QDialog):
             data_dir = os.path.join(os.path.dirname(__file__), 'data')
             os.makedirs(data_dir, exist_ok=True)
             
-            # 获取更新线程
-            update_thread = get_and_save_stock_list(data_dir)
+            # 获取更新管理器（多进程版本）
+            update_manager = get_and_save_stock_list(data_dir)
             
             # 连接信号
-            update_thread.progress.connect(self.show_update_progress)
-            update_thread.finished.connect(self.handle_update_finished)
+            update_manager.progress.connect(self.show_update_progress)
+            update_manager.finished.connect(self.handle_update_finished)
             
-            # 保存线程引用
-            self.update_thread = update_thread
+            # 启动多进程更新
+            update_manager.start()
+            
+            # 保存管理器引用
+            self.update_manager = update_manager
             
         except Exception as e:
             # 恢复按钮
@@ -597,9 +628,10 @@ class SettingsDialog(QDialog):
         else:
             QMessageBox.warning(self, "失败", f"更新股票列表失败：{message}")
         
-        # 清理线程
-        if hasattr(self, 'update_thread'):
-            self.update_thread = None
+        # 清理管理器
+        if hasattr(self, 'update_manager'):
+            self.update_manager.stop()
+            self.update_manager = None
             
         # 恢复按钮
         update_stock_list_btn = self.findChild(QPushButton, "update_stock_list_btn")

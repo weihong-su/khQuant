@@ -35,13 +35,51 @@ class NoWheelComboBox(QComboBox):
         event.ignore()
 
 class NoWheelDateEdit(QDateEdit):
-    """禁用滚轮事件的QDateEdit"""
+    """禁用滚轮事件的QDateEdit，修复中文显示问题"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_font()
+        
+    def setup_font(self):
+        """设置字体，解决中文显示问题"""
+        try:
+            from PyQt5.QtGui import QFont, QFontDatabase
+            # 尝试设置支持中文的字体
+            font_families = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"]
+            for family in font_families:
+                if QFontDatabase().hasFamily(family):
+                    font = QFont(family, 9)
+                    font.setStyleHint(QFont.SansSerif)
+                    self.setFont(font)
+                    break
+        except Exception as e:
+            print(f"设置DateEdit字体时出错: {str(e)}")
+    
     def wheelEvent(self, event):
         # 忽略滚轮事件，不调用父类的wheelEvent
         event.ignore()
 
 class NoWheelTimeEdit(QTimeEdit):
-    """禁用滚轮事件的QTimeEdit"""
+    """禁用滚轮事件的QTimeEdit，修复中文显示问题"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_font()
+        
+    def setup_font(self):
+        """设置字体，解决中文显示问题"""
+        try:
+            from PyQt5.QtGui import QFont, QFontDatabase
+            # 尝试设置支持中文的字体
+            font_families = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"]
+            for family in font_families:
+                if QFontDatabase().hasFamily(family):
+                    font = QFont(family, 9)
+                    font.setStyleHint(QFont.SansSerif)
+                    self.setFont(font)
+                    break
+        except Exception as e:
+            print(f"设置TimeEdit字体时出错: {str(e)}")
+    
     def wheelEvent(self, event):
         # 忽略滚轮事件，不调用父类的wheelEvent
         event.ignore()
@@ -82,7 +120,93 @@ logging.getLogger('').addHandler(console_handler)
 # 保持原有的HelpDialog类不变
 
 
-# 保持原有的DownloadThread类不变
+# 数据下载工作进程函数
+def download_data_worker(params, progress_queue, result_queue, stop_event):
+    """
+    数据下载工作进程函数
+    在独立进程中运行，避免GIL限制
+    """
+    if __name__ != '__main__':
+        import multiprocessing
+        multiprocessing.current_process().name = 'DownloadWorker'
+    
+    try:
+        import sys
+        import os
+        import time
+        
+        # 延迟导入
+        try:
+            from khQTTools import download_and_store_data
+        except Exception as import_error:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            sys.path.insert(0, current_dir)
+            try:
+                from khQTTools import download_and_store_data
+            except:
+                result_queue.put(('error', f"无法导入数据下载模块: {str(import_error)}"))
+                return
+        
+        import logging
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        
+        # 控制更新频率
+        last_progress_time = 0
+        last_status_time = 0
+        update_interval = 1.0  # 1秒更新一次，减少UI压力
+        
+        def progress_callback(percent):
+            nonlocal last_progress_time
+            current_time = time.time()
+            if current_time - last_progress_time >= update_interval or percent >= 100:
+                if not stop_event.is_set():
+                    try:
+                        progress_queue.put(('progress', percent), timeout=1)
+                        last_progress_time = current_time
+                    except:
+                        pass
+                else:
+                    raise InterruptedError("下载被中断")
+        
+        def log_callback(message):
+            nonlocal last_status_time
+            current_time = time.time()
+            if current_time - last_status_time >= update_interval:
+                if not stop_event.is_set():
+                    try:
+                        progress_queue.put(('status', str(message)), timeout=1)
+                        last_status_time = current_time
+                    except:
+                        pass
+                else:
+                    raise InterruptedError("下载被中断")
+        
+        def check_interrupt():
+            return stop_event.is_set()
+        
+        # 执行数据下载
+        download_and_store_data(
+            local_data_path=params['local_data_path'],
+            stock_files=params['stock_files'],
+            field_list=params['field_list'],
+            period_type=params['period_type'],
+            start_date=params['start_date'],
+            end_date=params['end_date'],
+            dividend_type=params.get('dividend_type', 'none'),
+            time_range=params.get('time_range', 'all'),
+            progress_callback=progress_callback,
+            log_callback=log_callback,
+            check_interrupt=check_interrupt
+        )
+        
+        result_queue.put(('success', '数据下载完成！'))
+        
+    except Exception as e:
+        error_msg = f"下载过程中发生错误: {str(e)}"
+        result_queue.put(('error', error_msg))
+        logging.error(error_msg, exc_info=True)
+
+
 class DownloadThread(QThread):
     progress = pyqtSignal(int)
     finished = pyqtSignal(bool, str)
@@ -94,6 +218,13 @@ class DownloadThread(QThread):
         self.params = params
         self.running = True
         self.mutex = QMutex()  # 添加互斥锁保护状态
+        
+        # 多进程通信队列
+        self.progress_queue = multiprocessing.Queue(maxsize=50)  # 减少队列大小
+        self.result_queue = multiprocessing.Queue()
+        self.stop_event = multiprocessing.Event()
+        self.process = None
+        
         logging.info(f"初始化下载线程，参数: {params}")
 
     def run(self):
@@ -101,136 +232,87 @@ class DownloadThread(QThread):
             if not self.isRunning():
                 return
                 
-            logging.info("下载线程开始运行")
-            
             # 参数验证
-            if not self.params.get('local_data_path'):
-                raise ValueError("数据存储路径未设置")
-                
             if not self.params.get('stock_files'):
                 raise ValueError("股票代码列表为空")
-                
-            if not self.params.get('field_list'):
-                raise ValueError("字段列表为空")
 
-            def progress_callback(percent):
-                # 在每次回调时检查中断标志
-                if not self.isRunning():
-                    logging.info("检测到下载中断标志，抛出中断异常")
-                    raise InterruptedError("下载被中断")
+            # 创建并启动子进程
+            self.process = multiprocessing.Process(
+                target=download_data_worker,
+                args=(self.params, self.progress_queue, self.result_queue, self.stop_event)
+            )
+            self.process.start()
+            
+            # 在线程中监控进程间通信
+            while self.isRunning() and (self.process and self.process.is_alive()):
                 try:
-                    self.progress.emit(percent)
-                except Exception as e:
-                    logging.error(f"进度错误: {str(e)}")
-
-            def log_callback(message):
-                # 在每次回调时检查中断标志
-                if not self.isRunning():
-                    logging.info("检测到下载中断标志，抛出中断异常")
-                    raise InterruptedError("下载被中断")
-                try:
-                    self.status_update.emit(message)
-                except Exception as e:
-                    logging.error(f"状态更新错误: {str(e)}")
-
-            # 分离指数文件和普通股票文件
-            index_files = []
-            stock_files = []
-            for file_path in self.params['stock_files']:
-                # 处理循环中也检查中断
-                if not self.isRunning():
-                    logging.info("检测到下载中断标志，停止处理")
-                    return
+                    # 检查进度和状态消息
+                    while True:
+                        try:
+                            msg_type, data = self.progress_queue.get_nowait()
+                            if msg_type == 'progress':
+                                self.progress.emit(data)
+                            elif msg_type == 'status':
+                                self.status_update.emit(data)
+                        except:
+                            break
                     
-                if '指数_股票列表' in file_path:
-                    index_files.append(file_path)
-                else:
-                    stock_files.append(file_path)
-
-            # 分别处理指数和普通股票
-            total_files = len(index_files) + len(stock_files)
-            current_progress = 0
-
-            # 创建正确的中断检查函数
-            def check_interrupt():
-                return not self.isRunning()
-
-            # 下载指数数据
-            if index_files and self.isRunning():
-                try:
-                    params_index = {
-                        'local_data_path': self.params['local_data_path'],
-                        'stock_files': index_files,
-                        'field_list': self.params['field_list'],
-                        'period_type': self.params['period_type'],
-                        'start_date': self.params['start_date'],
-                        'end_date': self.params['end_date'],
-                        'time_range': self.params.get('time_range', 'all'),
-                        'dividend_type': self.params.get('dividend_type', 'none')  # 添加复权参数
-                    }
-                    # 计算进度的回调函数
-                    progress_cb = lambda p: self.progress.emit(
-                        int(current_progress * 100 / total_files + p * len(index_files) / total_files)
-                    ) if self.isRunning() else None
-                    
-                    # 尝试下载指数数据，但在任何时候检查中断
+                    # 检查结果
                     try:
-                        download_and_store_data(**params_index, progress_callback=progress_cb, log_callback=log_callback, check_interrupt=check_interrupt)
-                    except InterruptedError:
-                        logging.info("下载指数数据被中断")
+                        result_type, message = self.result_queue.get_nowait()
+                        if result_type == 'success':
+                            self.finished.emit(True, message)
+                        else:
+                            self.error.emit(message)
                         return
-                        
-                    current_progress += len(index_files)
-                except Exception as e:
-                    logging.error(f"下载指数数据时出错: {str(e)}")
-                    raise
-
-            # 下载普通股票数据
-            if stock_files and self.isRunning():
-                try:
-                    params_stock = {
-                        'local_data_path': self.params['local_data_path'],
-                        'stock_files': stock_files,
-                        'field_list': self.params['field_list'],
-                        'period_type': self.params['period_type'],
-                        'start_date': self.params['start_date'],
-                        'end_date': self.params['end_date'],
-                        'time_range': self.params.get('time_range', 'all'),
-                        'dividend_type': self.params.get('dividend_type', 'none')  # 添加复权参数
-                    }
-                    # 计算进度的回调函数
-                    progress_cb = lambda p: self.progress.emit(
-                        int(current_progress * 100 / total_files + p * len(stock_files) / total_files)
-                    ) if self.isRunning() else None
+                    except:
+                        pass
                     
-                    # 尝试下载股票数据，但在任何时候检查中断
-                    try:
-                        download_and_store_data(**params_stock, progress_callback=progress_cb, log_callback=log_callback, check_interrupt=check_interrupt)
-                    except InterruptedError:
-                        logging.info("下载股票数据被中断")
-                        return
-                        
+                    # 短暂休眠
+                    self.msleep(200)  # 减少检查频率
+                    
                 except Exception as e:
-                    logging.error(f"下载股票数据时出错: {str(e)}")
-                    raise
-
-            if self.isRunning():
-                self.finished.emit(True, "数据下载完成！")
+                    logging.error(f"监控下载进程时出错: {str(e)}")
+                    break
+            
+            # 检查进程是否异常退出
+            if self.process and not self.process.is_alive():
+                exit_code = self.process.exitcode
+                if exit_code != 0 and self.isRunning():
+                    self.error.emit(f"下载进程异常退出，退出码: {exit_code}")
                 
         except Exception as e:
-            error_msg = f"下载过程中发生错误: {str(e)}"
+            error_msg = f"启动下载进程时发生错误: {str(e)}"
             logging.error(error_msg, exc_info=True)
-            import traceback
-            logging.error(traceback.format_exc())
-            
             if self.isRunning():
                 self.error.emit(error_msg)
                 self.finished.emit(False, error_msg)
 
     def stop(self):
+        """停止数据下载"""
         logging.info("尝试停止下载线程")
         self.mutex.lock()
         self.running = False
+        
+        # 停止多进程
+        try:
+            if self.stop_event:
+                self.stop_event.set()
+                
+            if self.process and self.process.is_alive():
+                # 等待进程结束
+                self.process.join(timeout=5)
+                
+                # 如果进程还没结束，强制终止
+                if self.process.is_alive():
+                    self.process.terminate()
+                    self.process.join(timeout=2)
+                    
+                    if self.process.is_alive():
+                        self.process.kill()
+        except Exception as e:
+            logging.error(f"停止下载进程时出错: {str(e)}")
+            
         self.mutex.unlock()
         logging.info("已设置下载中断标志")
         
@@ -438,19 +520,16 @@ def supplement_data_worker(params, progress_queue, result_queue, stop_event):
             check_interrupt=check_interrupt
         )
         
-        # 构建详细的完成消息
+        # 构建详细的完成消息（单行汇总，避免换行）
         total = supplement_stats['success_count'] + supplement_stats['empty_data_count'] + supplement_stats['error_count']
-        result_message = f"数据补充完成！\n"
-        
-        if supplement_stats['empty_data_count'] > 0:
-            result_message += f"数据为空: {supplement_stats['empty_data_count']} 只股票\n"
-            if len(supplement_stats['empty_stocks']) <= 10:
-                result_message += f"数据为空的股票: {', '.join(supplement_stats['empty_stocks'])}\n"
-            else:
-                result_message += f"数据为空的股票(前10个): {', '.join(supplement_stats['empty_stocks'][:10])}...\n"
-        
-        if supplement_stats['error_count'] > 0:
-            result_message += f"处理出错: {supplement_stats['error_count']} 只股票\n"
+        parts = ["数据补充完成！"]
+        parts.append(f"总股票数: {total}")
+        parts.append(f"成功补充: {supplement_stats['success_count']} 只股票")
+        if supplement_stats['empty_data_count']:
+            parts.append(f"空数据: {supplement_stats['empty_data_count']}")
+        if supplement_stats['error_count']:
+            parts.append(f"出错: {supplement_stats['error_count']}")
+        result_message = "；".join(parts)
         
         # 发送完成信号
         result_queue.put(('success', result_message.strip()))
@@ -829,8 +908,13 @@ class StockDataProcessorGUI(QMainWindow):
         # 移除激活相关的初始化代码
         self._activation_warning_shown = False
 
-        # 源码模式的图标路径
-        self.ICON_PATH = os.path.join(os.path.dirname(__file__), 'icons')
+        # 修改图标路径的获取方式
+        if getattr(sys, 'frozen', False):
+            # 打包后的环境，图标文件在 _internal/icons 目录下
+            self.ICON_PATH = os.path.join(os.path.dirname(sys.executable), '_internal', 'icons')
+        else:
+            # 开发环境
+            self.ICON_PATH = os.path.join(os.path.dirname(__file__), 'icons')
         
         # 确保图标目录存在
         os.makedirs(self.ICON_PATH, exist_ok=True)
@@ -911,14 +995,14 @@ class StockDataProcessorGUI(QMainWindow):
         height = screen.height()
         
         # 根据屏幕宽度确定字体缩放比例
-        if width >= 2560:  # 4K及以上分辨率
+        if width >= 3840:  # 4K及以上分辨率
+            return 1.8
+        elif width >= 2560:  # 2K分辨率
             return 1.4
-        elif width >= 1920:  # 1080p及以上分辨率  
-            return 1.2
-        elif width >= 1440:  # 720p及以上分辨率
+        elif width >= 1920:  # 1080P分辨率
             return 1.0
         else:  # 低分辨率
-            return 0.9
+            return 0.8
 
     def get_scaled_stylesheet(self):
         """获取根据分辨率缩放的样式表"""
@@ -1668,23 +1752,25 @@ class StockDataProcessorGUI(QMainWindow):
         # 设置窗口标题栏颜色（仅适用于Windows） - 借鉴 GUIkhQuant.py
         if sys.platform == 'win32':
             try:
-                from ctypes import windll, c_int, byref, sizeof
-                from ctypes.wintypes import DWORD
+                from ctypes import windll, c_int, byref, sizeof, POINTER
+                from ctypes.wintypes import DWORD, HWND, BOOL
 
                 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
                 DWMWA_CAPTION_COLOR = 35
                 
                 hwnd = int(self.winId())
-                # 启用深色模式
+                # 先尝试启用深色模式（一些较新Windows版本需要这个才能让标题栏颜色生效）
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_USE_IMMERSIVE_DARK_MODE,
-                    byref(c_int(2)),  # 2 means true
+                    byref(c_int(1)), # 1 for true, 0 for false, 2 for force true
                     sizeof(c_int)
                 )
                 
-                # 设置标题栏颜色
-                caption_color = DWORD(0x2b2b2b)  # 使用与主界面相同的颜色
+                # 设置标题栏颜色为 #2b2b2b
+                # BGR format: 0x00bbggrr
+                caption_color_val = 0x002B2B2B 
+                caption_color = DWORD(caption_color_val)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_CAPTION_COLOR,
@@ -1788,7 +1874,7 @@ class StockDataProcessorGUI(QMainWindow):
         # title_bar_layout = QHBoxLayout(title_bar)
         # title_bar_layout.setContentsMargins(15, 0, 10, 0) 
         # title_bar_layout.setSpacing(0) 
-        # title_label = QLabel("看海量化交易系统——数据模块")
+        # title_label = QLabel("看海量化回测系统——数据模块")
         # title_label.setObjectName("titleLabel")
         # title_bar_layout.addWidget(title_label)
         # title_bar_layout.addStretch()
@@ -2246,6 +2332,7 @@ class StockDataProcessorGUI(QMainWindow):
             'hs300': '沪深300成分股',
             'sz50': '上证50成分股',
             'indices': '常用指数',
+            'convertible_bonds': '沪深转债',
             'custom': '自选清单'  # 添加自选清单选项
         }
         
@@ -2411,7 +2498,7 @@ class StockDataProcessorGUI(QMainWindow):
                     # 修改这里：排除所有预定义的文件名，包括自选清单
                     if line.strip() and not any(board_name in line for board_name in [
                         '上证A股', '深证A股', '创业板', '科创板', '沪深A股', '指数',
-                        '中证500成分股', '沪深300成分股', '上证50成分股', 'otheridx.csv'  # 添加 otheridx.csv
+                        '中证500成分股', '沪深300成分股', '上证50成分股', '沪深转债', 'otheridx.csv'  # 添加沪深转债和otheridx.csv
                     ]):
                         custom_files.append(line.strip())
             
@@ -2450,6 +2537,8 @@ class StockDataProcessorGUI(QMainWindow):
                                 logging.info(f"已创建新的自选清单文件: {custom_file}")
                             except Exception as e:
                                 logging.error(f"创建自选清单文件失败: {str(e)}")
+                    elif stock_type == 'convertible_bonds':
+                        filename = os.path.join(data_dir, "沪深转债_列表.csv")
                     else:
                         board_names = {
                             'sh_a': '上证A股',
@@ -3406,6 +3495,19 @@ class StockDataProcessorGUI(QMainWindow):
     def update_status(self, message):
         """更新状态信息"""
         try:
+            # 限制状态更新频率
+            import time
+            current_time = time.time()
+            if not hasattr(self, '_last_status_update_time'):
+                self._last_status_update_time = 0
+            
+            # 只有距离上次更新超过0.5秒或是重要消息才更新
+            is_important = any(keyword in str(message) for keyword in ['完成', '失败', '错误', '成功', '开始'])
+            if current_time - self._last_status_update_time < 0.5 and not is_important:
+                return
+                
+            self._last_status_update_time = current_time
+            
             # 使用status_label显示消息，而不是statusBar
             if hasattr(self, 'status_label'):
                 # 设置工具提示，显示完整消息
@@ -3423,9 +3525,6 @@ class StockDataProcessorGUI(QMainWindow):
                 
                 self.status_label.setText(displayed_message)
                 
-                # 确保消息立即显示
-                QApplication.processEvents()
-                
                 # 记录完整消息以便参考
                 logging.info(f"状态更新: {message}")
         except Exception as e:
@@ -3442,80 +3541,12 @@ class StockDataProcessorGUI(QMainWindow):
             if "没有下载到新数据" in message:
                 self.status_label.setText("补充数据完成，未发现新数据可供下载。")
             else:
-                # 显示成功的弹窗
-                custom_msg_box = QMessageBox(self)
-                custom_msg_box.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-                custom_msg_box.setText(message)
-                custom_msg_box.setStyleSheet("""
-                    QMessageBox {
-                        background-color: #F0F0F0;
-                        border: 1px solid #D0D0D0;
-                        border-radius: 10px;
-                    }
-                    QMessageBox QLabel {
-                        background-color: #F0F0F0;
-                        color: #2C3E50;
-                        font-size: 24px;
-                        padding: 20px;
-                    }
-                """)
-                ok_button = custom_msg_box.addButton(QMessageBox.Ok)
-                ok_button.setMinimumSize(120, 50)
-                ok_button.setStyleSheet("""
-                    QPushButton {
-                        font-size: 18px;
-                        background-color: #808080;
-                        color: white;
-                        border: none;
-                        padding: 8px;
-                        border-radius: 6px;
-                    }
-                    QPushButton:hover {
-                        background-color: #909090;
-                    }
-                    QPushButton:pressed {
-                        background-color: #707070;
-                    }
-                """)
-                custom_msg_box.exec_()
+                # 使用标准消息框，自动适配内容
+                QMessageBox.information(self, "成功", message)
                 self.status_label.setText(message)  # 成功时也更新底部状态栏
         else:
-            error_msg_box = QMessageBox(self)
-            error_msg_box.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-            error_msg_box.setIcon(QMessageBox.Critical)
-            error_msg_box.setText(f"补充数据过程中发生错误: {message}")
-            error_msg_box.setStyleSheet("""
-                QMessageBox {
-                    background-color: #F0F0F0;
-                    border: 1px solid #D0D0D0;
-                    border-radius: 10px;
-                }
-                QMessageBox QLabel {
-                    background-color: #F0F0F0;
-                    color: #2C3E50;
-                    font-size: 24px;
-                    padding: 20px;
-                }
-            """)
-            ok_button = error_msg_box.addButton(QMessageBox.Ok)
-            ok_button.setMinimumSize(120, 50)
-            ok_button.setStyleSheet("""
-                QPushButton {
-                    font-size: 24px;
-                    background-color: #808080;
-                    color: white;
-                    border: none;
-                    padding: 8px;
-                    border-radius: 6px;
-                }
-                QPushButton:hover {
-                    background-color: #909090;
-                }
-                QPushButton:pressed {
-                    background-color: #707070;
-                }
-            """)
-            error_msg_box.exec_()
+            # 使用标准错误消息框
+            QMessageBox.critical(self, "错误", f"补充数据过程中发生错误: {message}")
             self.status_label.setText(f"补充数据错误: {message}") # 错误时也更新底部状态栏
 
         self.progress_bar.setValue(0)
@@ -3644,8 +3675,13 @@ def setup_logging():
         # 在这里设置内部标志
         ENABLE_LOGGING = True  # 将标志设置为 True 开启完整日志，False 则只记录错误
         
-        # 确定日志目录路径 - 源码模式
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        # 确定日志目录路径
+        if getattr(sys, 'frozen', False):
+            # 打包环境下，使用可执行文件所在目录
+            base_path = os.path.dirname(sys.executable)
+        else:
+            # 开发环境下，使用当前文件所在目录
+            base_path = os.path.dirname(os.path.abspath(__file__))
         
         logs_dir = os.path.join(base_path, 'logs')
         os.makedirs(logs_dir, exist_ok=True)
@@ -3683,7 +3719,7 @@ def setup_logging():
             logging.info("="*50)
             logging.info("应用程序启动")
             logging.info(f"日志文件路径: {log_filename}")
-            logging.info(f"运行模式: 源码环境")
+            logging.info(f"运行模式: {'打包环境' if getattr(sys, 'frozen', False) else '开发环境'}")
             logging.info(f"Python版本: {sys.version}")
             logging.info(f"操作系统: {sys.platform}")
             logging.info("="*50)
@@ -3740,8 +3776,55 @@ if __name__ == '__main__':
         logging.info("程序启动")
         app = QApplication(sys.argv)
         
-        # 源码模式的图标路径
-        ICON_PATH = os.path.join(os.path.dirname(__file__), 'icons')
+        # 设置字体和编码，解决时间选择器乱码问题
+        try:
+            # 设置应用程序的默认字体
+            from PyQt5.QtGui import QFont, QFontDatabase
+            
+            # 添加系统字体
+            font_families = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS", "DejaVu Sans"]
+            default_font = None
+            
+            for family in font_families:
+                if QFontDatabase().hasFamily(family):
+                    default_font = QFont(family, 9)
+                    break
+            
+            if default_font:
+                app.setFont(default_font)
+                logging.info(f"已设置应用字体: {default_font.family()}")
+            else:
+                # 使用系统默认字体
+                default_font = QFont()
+                default_font.setPointSize(9)
+                app.setFont(default_font)
+                logging.info("使用系统默认字体")
+            
+            # 设置Qt的本地化
+            from PyQt5.QtCore import QLocale, QTranslator
+            
+            # 设置中文本地化
+            locale = QLocale(QLocale.Chinese, QLocale.China)
+            QLocale.setDefault(locale)
+            
+            # 创建并安装Qt翻译器
+            qt_translator = QTranslator()
+            # Qt标准控件的中文翻译
+            if qt_translator.load(locale, "qt", "_", ":/translations/"):
+                app.installTranslator(qt_translator)
+            elif qt_translator.load("qt_zh_CN", ":/translations/"):
+                app.installTranslator(qt_translator)
+            
+            logging.info("已设置中文本地化")
+            
+        except Exception as e:
+            logging.error(f"设置字体和本地化时出错: {str(e)}")
+        
+        # 修改图标路径获取方式
+        if getattr(sys, 'frozen', False):
+            ICON_PATH = os.path.join(os.path.dirname(sys.executable), '_internal', 'icons')
+        else:
+            ICON_PATH = os.path.join(os.path.dirname(__file__), 'icons')
             
         logging.info(f"图标路径: {ICON_PATH}")
         

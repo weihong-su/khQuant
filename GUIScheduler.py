@@ -8,7 +8,8 @@ import time as time_module
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayout, 
                              QWidget, QGroupBox, QCheckBox, QGridLayout, QTextEdit, 
                              QPushButton, QStatusBar, QProgressBar, QLabel, QTimeEdit,
-                             QMessageBox, QDesktopWidget, QSplitter, QComboBox, QFileDialog)
+                             QMessageBox, QDesktopWidget, QSplitter, QComboBox, QFileDialog,
+                             QSizePolicy)
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QTime, QTimer, QMutex
 from PyQt5.QtGui import QIcon, QFont, QColor
 import schedule
@@ -246,6 +247,9 @@ class GUIScheduler(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # 检测屏幕分辨率并设置字体缩放
+        self.font_scale = self.detect_screen_resolution()
+        
         # 初始化状态变量
         self.is_scheduled_running = False
         self.supplement_thread = None
@@ -262,7 +266,265 @@ class GUIScheduler(QMainWindow):
         
         self.initUI()
         self.load_stock_names()
+        # 在界面完全构建后，清理局部字体并统一应用缩放样式
+        QTimer.singleShot(0, self.apply_scaled_styles)
     
+    def detect_screen_resolution(self):
+        """检测屏幕分辨率并返回字体缩放比例"""
+        screen = QDesktopWidget().screenGeometry()
+        width = screen.width()
+        height = screen.height()
+        
+        # 根据屏幕宽度确定字体缩放比例（与主界面保持一致）
+        if width >= 3840:  # 4K及以上分辨率
+            return 1.8
+        elif width >= 2560:  # 2K分辨率
+            return 1.4
+        elif width >= 1920:  # 1080P分辨率
+            return 1.0
+        else:  # 低分辨率
+            return 0.8
+
+    def get_scaled_stylesheet(self):
+        """获取根据分辨率缩放的样式表"""
+        # 基础字体大小
+        base_sizes = {
+            'small': 12,
+            'normal': 14, 
+            'large': 16,
+            'xl': 18,
+            'xxl': 24,
+            'xxxl': 30
+        }
+        
+        # 计算缩放后的字体大小
+        scaled_sizes = {k: int(v * self.font_scale) for k, v in base_sizes.items()}
+        
+        return f"""
+            /* 主窗口和基础样式 */
+            QMainWindow {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            QWidget {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 分组框样式 */
+            QGroupBox {{
+                background-color: #333333;
+                border: 1px solid #404040;
+                border-radius: 6px;
+                margin-top: 1em;
+                padding-top: 1em;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #e8e8e8;
+                font-weight: bold;
+                background-color: #333333;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 标签样式 */
+            QLabel {{
+                color: #e8e8e8;
+                background-color: transparent;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 输入框样式 */
+            QLineEdit {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 5px;
+                color: #e8e8e8;
+                selection-background-color: #666666;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 按钮样式 */
+            QPushButton {{
+                background-color: #505050;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                color: #e8e8e8;
+                min-width: 80px;
+                font-weight: bold;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            QPushButton:hover {{
+                background-color: #606060;
+            }}
+            QPushButton:pressed {{
+                background-color: #454545;
+            }}
+            QPushButton:disabled {{
+                background-color: #404040;
+                color: #808080;
+            }}
+            
+            /* 下拉框样式 */
+            QComboBox {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 5px;
+                color: #e8e8e8;
+                min-width: 100px;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 复选框样式 */
+            QCheckBox {{
+                color: #e8e8e8;
+                spacing: 5px;
+                font-size: {scaled_sizes['normal']}px;
+                background-color: transparent;
+            }}
+            
+            /* 时间编辑器样式 */
+            QTimeEdit {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 5px;
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 文本编辑器样式 */
+            QTextEdit {{
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                border: 1px solid #404040;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 进度条样式 */
+            QProgressBar {{
+                background-color: #404040;
+                border: 1px solid #4d4d4d;
+                border-radius: 5px;
+                text-align: center;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            /* 状态栏样式 */
+            QStatusBar {{
+                background-color: #333333;
+                color: #e8e8e8;
+                border-top: 1px solid #4d4d4d;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+        """
+
+    def get_complete_scaled_stylesheet(self):
+        """获取包含强制覆盖的完整缩放样式表"""
+        # 计算缩放后的字体大小和控件尺寸
+        font_14 = int(14 * self.font_scale)
+        font_16 = int(16 * self.font_scale)
+        font_12 = int(12 * self.font_scale)
+        
+        # 计算控件高度（基于字体大小）
+        button_height = max(30, int(30 * self.font_scale))
+        input_height = max(25, int(25 * self.font_scale))
+        combo_height = max(25, int(25 * self.font_scale))
+        
+        # 基础样式表
+        base_style = self.get_scaled_stylesheet()
+        
+        # 强制覆盖样式，包含高度调整
+        override_style = f"""
+            /* 强制字体大小覆盖 */
+            * {{ font-size: {font_14}px !important; }}
+            QLabel {{ font-size: {font_14}px !important; min-height: {input_height}px; }}
+            QPushButton {{ 
+                font-size: {font_14}px !important; 
+                min-height: {button_height}px;
+                padding: {max(4, int(4 * self.font_scale))}px {max(8, int(8 * self.font_scale))}px;
+            }}
+            /* 复选框：同步主界面的完整样式，确保间距和尺寸正确缩放 */
+            QCheckBox {{
+                spacing: {max(5, int(5 * self.font_scale))}px;
+                padding: {max(5, int(5 * self.font_scale))}px 0;
+            }}
+            QCheckBox::indicator {{
+                width: {max(20, int(20 * self.font_scale))}px;
+                height: {max(20, int(20 * self.font_scale))}px;
+            }}
+            QComboBox {{ 
+                font-size: {font_14}px !important; 
+                min-height: {combo_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QLineEdit {{ 
+                font-size: {font_14}px !important; 
+                min-height: {input_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QGroupBox {{ 
+                font-size: {font_14}px !important; 
+                padding-top: {max(15, int(15 * self.font_scale))}px;
+            }}
+            QGroupBox::title {{ 
+                font-size: {font_14}px !important; 
+                padding: {max(3, int(3 * self.font_scale))}px {max(5, int(5 * self.font_scale))}px;
+                background-color: transparent; /* 与主背景一致，消除标题底色块 */
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+            }}
+            QTimeEdit {{ 
+                font-size: {font_14}px !important; 
+                min-height: {combo_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+            QTextEdit {{ font-size: {font_14}px !important; }}
+            QProgressBar {{ 
+                font-size: {font_14}px !important; 
+                min-height: {max(16, int(16 * self.font_scale))}px;
+            }}
+            QStatusBar {{ font-size: {font_14}px !important; }}
+            QCheckBox {{ 
+                font-size: {font_14}px !important; 
+                min-height: {max(16, int(16 * self.font_scale))}px;
+            }}
+            QSpinBox, QDoubleSpinBox {{ 
+                font-size: {font_14}px !important; 
+                min-height: {input_height}px;
+                padding: {max(3, int(3 * self.font_scale))}px;
+            }}
+        """
+        
+        return base_style + override_style
+
+    def apply_scaled_styles(self):
+        """在界面构建完成后，统一清理并应用缩放样式，避免被局部样式覆盖"""
+        # 1) 递归移除所有子控件样式中的 font-size
+        try:
+            from PyQt5.QtWidgets import QWidget
+            import re
+            for child in self.findChildren(QWidget):
+                if hasattr(child, 'styleSheet'):
+                    ss = child.styleSheet() or ''
+                    if 'font-size' in ss:
+                        ss = re.sub(r"font-size\s*:\s*\d+px;?", "", ss)
+                        child.setStyleSheet(ss)
+        except Exception:
+            pass
+        # 2) 重新应用完整缩放样式表
+        self.setStyleSheet(self.get_complete_scaled_stylesheet())
+
     def get_icon_path(self, icon_name):
         """获取图标文件的正确路径"""
         if getattr(sys, 'frozen', False):
@@ -334,10 +596,12 @@ class GUIScheduler(QMainWindow):
             else:
                 logging.warning(f"图标文件不存在: {icon_file} 和 {icon_file_png}")
         
+        # 在界面创建前就设置完整的样式表，避免闪烁
+        self.setStyleSheet(self.get_complete_scaled_stylesheet())
+        
         # 创建中心部件
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
-        central_widget.setStyleSheet("background-color: #2b2b2b;")
         self.setCentralWidget(central_widget)
         
         # 创建主布局
@@ -371,8 +635,13 @@ class GUIScheduler(QMainWindow):
         self.progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self.progress_bar)
         
-        # 设置整体样式
-        self.setStyleSheet("""
+        # 重新应用完整缩放样式表（确保不被覆盖）
+        self.setStyleSheet(self.get_complete_scaled_stylesheet())
+        
+        # 原有样式注释掉，已整合到完整样式表中
+        """
+        # 注释掉原有的硬编码样式，避免覆盖缩放样式表
+        self.setStyleSheet('''
             /* 主窗口和基础样式 */
             QMainWindow {
                 background-color: #2b2b2b;
@@ -468,7 +737,8 @@ class GUIScheduler(QMainWindow):
                 border-radius: 3px;
                 font-size: 14px;
             }
-        """)
+        ''')
+        """
     
     def create_config_widget(self):
         """创建配置区域"""
@@ -532,12 +802,14 @@ class GUIScheduler(QMainWindow):
             'hs300': '沪深300成分股',
             'sz50': '上证50成分股',
             'indices': '常用指数',
+            'convertible_bonds': '沪深转债',
             'custom': '自定义股票池'
         }
         
         # 创建网格布局
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(8)
+        grid_layout.setHorizontalSpacing(24)
+        grid_layout.setVerticalSpacing(10)
         row = 0
         col = 0
         
@@ -581,13 +853,15 @@ class GUIScheduler(QMainWindow):
                 col = 0
             else:
                 checkbox = QCheckBox(display_name)
-                checkbox.setStyleSheet("color: #e8e8e8; font-size: 14px; padding: 5px;")
+                checkbox.setStyleSheet("color: #e8e8e8; padding: 5px;")
+                # 给复选框一些最小宽度，避免长文本换行或挤压
+                checkbox.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
                 checkbox.stateChanged.connect(self.on_stock_pool_changed)
                 self.stock_pool_checkboxes[pool_type] = checkbox
                 grid_layout.addWidget(checkbox, row, col)
                 
                 col += 1
-                if col >= 2:  # 2列布局
+                if col >= 1:  # 改为1列布局，彻底解决挤压问题
                     col = 0
                     row += 1
         
@@ -687,7 +961,7 @@ class GUIScheduler(QMainWindow):
             }
         """)
         
-        period_layout = QHBoxLayout()
+        period_layout = QVBoxLayout()
         
         # 周期类型复选框
         self.period_checkboxes = {}
@@ -698,13 +972,25 @@ class GUIScheduler(QMainWindow):
             '1d': '日线'
         }
         
+        # 将水平布局改为2x2的网格布局
+        grid_layout = QGridLayout()
+        grid_layout.setHorizontalSpacing(int(24 * self.font_scale))
+        grid_layout.setVerticalSpacing(int(10 * self.font_scale))
+        
+        checkboxes = []
         for period_type, display_name in periods.items():
             checkbox = QCheckBox(display_name)
-            checkbox.setStyleSheet("color: #e8e8e8; font-size: 14px; padding: 5px;")
             checkbox.stateChanged.connect(self.on_period_changed)
             self.period_checkboxes[period_type] = checkbox
-            period_layout.addWidget(checkbox)
-        
+            checkboxes.append(checkbox)
+            
+        # 手动将复选框添加到网格中
+        grid_layout.addWidget(checkboxes[0], 0, 0) # Tick
+        grid_layout.addWidget(checkboxes[1], 0, 1) # 1分钟
+        grid_layout.addWidget(checkboxes[2], 1, 0) # 5分钟
+        grid_layout.addWidget(checkboxes[3], 1, 1) # 日线
+
+        period_layout.addLayout(grid_layout)
         period_group.setLayout(period_layout)
         layout.addWidget(period_group)
     
@@ -737,7 +1023,7 @@ class GUIScheduler(QMainWindow):
         time_layout.addWidget(time_label)
         
         self.supplement_time_edit = QTimeEdit()
-        self.supplement_time_edit.setTime(QTime(16, 0))  # 默认下午4点
+        self.supplement_time_edit.setTime(QTime(15, 30))  # 默认下午3点30分
         self.supplement_time_edit.setDisplayFormat("HH:mm")
         self.supplement_time_edit.setMinimumHeight(35)
         self.supplement_time_edit.setStyleSheet("""
@@ -1327,6 +1613,8 @@ class GUIScheduler(QMainWindow):
                         filename = os.path.join(data_dir, "创业板_股票列表.csv")
                     elif pool_type == 'sci':
                         filename = os.path.join(data_dir, "科创板_股票列表.csv")
+                    elif pool_type == 'convertible_bonds':
+                        filename = os.path.join(data_dir, "沪深转债_列表.csv")
                     elif pool_type == 'custom':
                         # 处理自定义股票池
                         # 1. 添加默认自定义文件

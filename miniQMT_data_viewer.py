@@ -326,16 +326,34 @@ class MiniQMTDataViewer(QMainWindow):
         
         # 创建分割器
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setStyleSheet("background-color: #2b2b2b;")
+        splitter.setStyleSheet("""
+            QSplitter {
+                background-color: #2b2b2b;
+            }
+            QSplitter::handle {
+                background-color: #404040;
+                width: 3px;
+                margin: 2px;
+                border-radius: 1px;
+            }
+            QSplitter::handle:hover {
+                background-color: #505050;
+            }
+            QSplitter::handle:pressed {
+                background-color: #606060;
+            }
+        """)
         
         # 创建左侧数据补充工具
         supplement_widget = self.create_supplement_widget()
-        supplement_widget.setFixedWidth(460)  # 增加宽度以适应更大的字体和更好的布局
+        supplement_widget.setMinimumWidth(300)  # 设置最小宽度而不是固定宽度，允许拖动调节
+        supplement_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         
         # 创建中间树形控件
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderLabel("数据结构")
-        self.tree_widget.setFixedWidth(280)  # 调整宽度以适应三列布局
+        self.tree_widget.setMinimumWidth(280)  # 设置最小宽度而不是固定宽度，允许拖动调节
+        self.tree_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tree_widget.itemClicked.connect(self.on_tree_item_clicked)
         self.tree_widget.setRootIsDecorated(True)  # 显示根节点装饰
         self.tree_widget.setItemsExpandable(True)  # 允许展开
@@ -629,9 +647,12 @@ class MiniQMTDataViewer(QMainWindow):
         splitter.addWidget(supplement_widget)
         splitter.addWidget(self.tree_widget)
         splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 0)  # 左侧数据补充工具固定宽度
-        splitter.setStretchFactor(1, 0)  # 中间树形控件固定宽度
-        splitter.setStretchFactor(2, 1)  # 右侧数据展示区可伸缩
+        
+        # 设置初始比例和拉伸因子，使三个区域都可以调节大小
+        splitter.setSizes([460, 280, 800])  # 设置初始宽度比例
+        splitter.setStretchFactor(0, 1)  # 左侧数据补充工具可调节
+        splitter.setStretchFactor(1, 1)  # 中间树形控件可调节  
+        splitter.setStretchFactor(2, 2)  # 右侧数据展示区拉伸因子更大，优先伸缩
         
         main_layout.addWidget(splitter)
         

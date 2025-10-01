@@ -299,11 +299,12 @@ class UpdateManager(QObject):
                 "version": "1.0.0",
                 "build_date": "2024-02-20",
                 "channel": "stable",
-                "app_name": "看海量化回测平台"
+                "app_name": "看海量化回测平台"  
             }
         
         # 系列二更新基路径
         self.update_url = "https://khsci.com/khQuant/update"
+        #self.update_url = "https://khsci.com/khQuant/update2"
         self.update_thread = None
         self.download_thread = None
 

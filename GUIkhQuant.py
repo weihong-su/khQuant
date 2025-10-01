@@ -55,8 +55,16 @@ from version import get_version_info  # 导入版本信息
 # 配置日志系统 - 修复打包环境下的路径问题
 def get_logs_dir():
     """获取日志目录的正确路径"""
-    # 源码模式 - 使用项目根目录
-    base_dir = os.path.dirname(os.path.dirname(__file__))
+    if getattr(sys, 'frozen', False):
+        # 打包环境
+        if hasattr(sys, '_MEIPASS'):
+            # 使用exe文件所在目录作为基础路径
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(sys.executable)
+    else:
+        # 开发环境
+        base_dir = os.path.dirname(os.path.dirname(__file__))
     
     # 尝试多个可能的日志目录位置
     possible_dirs = [
@@ -210,6 +218,11 @@ class KhQuantGUI(QMainWindow):
         # 初始化设置
         self.settings = QSettings('KHQuant', 'StockAnalyzer')
         
+        # 初始化延迟日志显示相关属性（需要在早期初始化，避免AttributeError）
+        self.delay_log_display = self.settings.value('delay_log_display', False, type=bool)
+        self.delayed_logs = []
+        self.strategy_is_running = False
+        
         # 检测屏幕分辨率并设置字体缩放
         self.font_scale = self.detect_screen_resolution()
         
@@ -227,7 +240,7 @@ class KhQuantGUI(QMainWindow):
         self.current_config_file = None  # 当前加载的配置文件路径
         
         # 设置窗口属性
-        self.setWindowTitle("看海量化交易系统")
+        self.setWindowTitle("看海量化回测系统")
         # 设置窗口图标
         self.setWindowIcon(QIcon(self.get_icon_path("stock_icon.ico")))
         
@@ -274,15 +287,15 @@ class KhQuantGUI(QMainWindow):
         logging.info(f"软件启动时间: {self.start_time}")
         logging.info(f"当前版本: {get_version_info()['version']}")
         logging.info(f"日志文件路径: {os.path.join(LOGS_DIR, 'app.log')}")
-        logging.info(f"程序运行环境: 源码环境")
+        logging.info(f"程序运行环境: {'打包环境' if getattr(sys, 'frozen', False) else '开发环境'}")
+        if getattr(sys, 'frozen', False):
+            logging.info(f"可执行文件路径: {sys.executable}")
+            if hasattr(sys, '_MEIPASS'):
+                logging.info(f"临时资源路径: {sys._MEIPASS}")
         
         # 最后确保窗口最大化显示（放在初始化的最末尾）
         self.showMaximized()
 
-        # 在KhQuantGUI类的属性初始化部分添加以下两个属性（在__init__方法中）
-        self.delay_log_display = self.settings.value('delay_log_display', False, type=bool)  # 从设置中读取延迟显示状态
-        self.delayed_logs = []  # 延迟显示的日志缓存
-        self.strategy_is_running = False  # 策略运行状态标志
 
         # 初始化数据管理窗口实例变量
         self.csv_manager_window = None
@@ -291,22 +304,43 @@ class KhQuantGUI(QMainWindow):
 
     def get_icon_path(self, icon_name):
         """获取图标文件的正确路径"""
-        # 源码模式 - 使用当前文件目录
-        return os.path.join(os.path.dirname(__file__), 'icons', icon_name)
+        if getattr(sys, 'frozen', False):
+            # 打包环境 - 使用sys._MEIPASS
+            if hasattr(sys, '_MEIPASS'):
+                return os.path.join(sys._MEIPASS, 'icons', icon_name)
+            else:
+                # 备用路径
+                return os.path.join(os.path.dirname(sys.executable), 'icons', icon_name)
+        else:
+            # 开发环境
+            return os.path.join(os.path.dirname(__file__), 'icons', icon_name)
     
     def get_data_path(self, filename):
         """获取数据文件的正确路径"""
         # 特殊处理自选清单文件，存储在用户可写目录
         if filename == "otheridx.csv":
-            # 源码模式 - 使用用户文档目录以确保可写
-            user_docs = os.path.expanduser("~/Documents")
-            khquant_dir = os.path.join(user_docs, "KHQuant", "data")
-            # 确保目录存在
-            os.makedirs(khquant_dir, exist_ok=True)
-            return os.path.join(khquant_dir, filename)
+            if getattr(sys, 'frozen', False):
+                # 打包环境 - 使用用户文档目录
+                user_docs = os.path.expanduser("~/Documents")
+                khquant_dir = os.path.join(user_docs, "KHQuant", "data")
+                # 确保目录存在
+                os.makedirs(khquant_dir, exist_ok=True)
+                return os.path.join(khquant_dir, filename)
+            else:
+                # 开发环境 - 使用原路径
+                return os.path.join(os.path.dirname(__file__), 'data', filename)
         
-        # 其他文件的正常处理 - 源码模式
-        return os.path.join(os.path.dirname(__file__), 'data', filename)
+        # 其他文件的正常处理
+        if getattr(sys, 'frozen', False):
+            # 打包环境 - 使用sys._MEIPASS
+            if hasattr(sys, '_MEIPASS'):
+                return os.path.join(sys._MEIPASS, 'data', filename)
+            else:
+                # 备用路径
+                return os.path.join(os.path.dirname(sys.executable), 'data', filename)
+        else:
+            # 开发环境
+            return os.path.join(os.path.dirname(__file__), 'data', filename)
 
     def detect_screen_resolution(self):
         """检测屏幕分辨率并返回字体缩放比例"""
@@ -316,14 +350,14 @@ class KhQuantGUI(QMainWindow):
         height = screen.height()
         
         # 根据屏幕宽度确定字体缩放比例
-        if width >= 2560:  # 4K及以上分辨率
+        if width >= 3840:  # 4K及以上分辨率
+            return 1.8
+        elif width >= 2560:  # 2K分辨率
             return 1.4
-        elif width >= 1920:  # 1080p及以上分辨率  
-            return 1.2
-        elif width >= 1440:  # 720p及以上分辨率
+        elif width >= 1920:  # 1080P分辨率
             return 1.0
         else:  # 低分辨率
-            return 0.9
+            return 0.8
 
     def get_scaled_stylesheet(self):
         """获取根据分辨率缩放的样式表"""
@@ -339,6 +373,9 @@ class KhQuantGUI(QMainWindow):
         
         # 计算缩放后的字体大小
         scaled_sizes = {k: int(v * self.font_scale) for k, v in base_sizes.items()}
+        
+        # 计算缩放后的复选框指示器大小
+        checkbox_indicator_size = max(20, int(20 * self.font_scale))
         
         return f"""
             /* 主窗口和基础样式 */
@@ -561,9 +598,9 @@ class KhQuantGUI(QMainWindow):
                 background-color: transparent;
             }}
             QCheckBox::indicator {{
-                width: 18px;
-                height: 18px;
-                border: 1px solid #4d4d4d;
+                width: {checkbox_indicator_size}px;
+                height: {checkbox_indicator_size}px;
+                border: 1px solid #666666;
                 border-radius: 3px;
                 background-color: #404040;
             }}
@@ -907,7 +944,7 @@ class KhQuantGUI(QMainWindow):
         logging.getLogger('').addHandler(self.log_handler)
         
         # 设置窗口标题
-        self.setWindowTitle("看海量化交易系统")
+        self.setWindowTitle("看海量化回测系统")
         
         # 设置窗口图标
         logo_path = self.get_icon_path("stock_icon.ico")
@@ -937,40 +974,47 @@ class KhQuantGUI(QMainWindow):
         self.status_label.setFixedWidth(100)
         self.status_bar.addPermanentWidget(self.status_label)
         
-        # 直接创建进度条，不使用额外容器或标签
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(16)
-        self.progress_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        # 设置进度条文本格式，显示百分比
-        self.progress_bar.setFormat("回测进度: %p%")
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #404040;
-                border-radius: 2px;
-                text-align: center;
-                color: white;
-                font-weight: bold;
-                background-color: #2b2b2b;
-                padding: 1px;
-                margin: 0px;
-            }
-            QProgressBar::chunk {
-                background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
-                                    stop: 0 #0D47A1, 
-                                    stop: 0.5 #1976D2, 
-                                    stop: 1 #2196F3);
-                border-radius: 1px;
-            }
-        """)
+        # 进度条容器：叠放进度条与文本，保证文本浮在上方
+        class ProgressOverlay(QWidget):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                layout = QHBoxLayout(self)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.setSpacing(6)
+                # 进度条（左侧）
+                self.bar = QProgressBar(self)
+                self.bar.setTextVisible(False)
+                self.bar.setRange(0, 100)
+                self.bar.setValue(0)
+                self.bar.setFormat("")  # 禁止进度条自绘文字
+                self.bar.setFixedHeight(16)
+                self.bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                layout.addWidget(self.bar, 1)
+                # 右侧文本
+                self.label = QLabel("回测进度: 0%", self)
+                self.label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                self.label.setStyleSheet("""
+                    QLabel {
+                        color: white;
+                        font-weight: bold;
+                        background: transparent;
+                        padding-left: 2px;
+                    }
+                """)
+                self.label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+                layout.addWidget(self.label, 0)
         
-        # 直接添加进度条到状态栏，它会占据所有可用空间
-        self.status_bar.addWidget(self.progress_bar, 1)
+        # 使用自定义覆盖控件
+        self.progress_container = ProgressOverlay()
+        self.progress_bar = self.progress_container.bar
+        self.progress_text = self.progress_container.label
         
-        # 默认隐藏进度条
-        self.progress_bar.hide()
+        # 添加到状态栏
+        self.status_bar.addWidget(self.progress_container, 1)
+         
+         # 默认隐藏进度条
+        self.progress_container.hide()
         
         # 设置状态栏样式
         self.status_bar.setStyleSheet("""
@@ -1064,6 +1108,9 @@ class KhQuantGUI(QMainWindow):
         self.stop_action = toolbar.addAction("停止运行")
         self.stop_action.triggered.connect(self.stop_strategy)
         self.stop_action.setEnabled(False)  # 初始状态禁用
+        
+        # 为运行和停止按钮设置特定颜色样式
+        self.set_button_colors()
         
         # 添加分隔符
         toolbar.addSeparator()
@@ -1166,6 +1213,60 @@ class KhQuantGUI(QMainWindow):
                 color: #808080;
             }
         """)
+
+    def set_button_colors(self):
+        """为运行和停止按钮设置特定颜色样式"""
+        # 获取工具栏中的按钮widget
+        toolbar = self.findChild(QToolBar, "mainToolBar")
+        if toolbar:
+            # 为开始运行按钮设置绿色样式
+            for action in toolbar.actions():
+                widget = toolbar.widgetForAction(action)
+                if widget and action == self.start_action:
+                    widget.setStyleSheet("""
+                        QToolButton {
+                            background-color: #2d7a2d;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 8px 16px;
+                            color: white;
+                            min-width: 80px;
+                            font-weight: bold;
+                        }
+                        QToolButton:hover {
+                            background-color: #3d8a3d;
+                        }
+                        QToolButton:pressed {
+                            background-color: #1d6a1d;
+                        }
+                        QToolButton:disabled {
+                            background-color: #404040;
+                            color: #808080;
+                        }
+                    """)
+                # 为停止运行按钮设置红色样式
+                elif widget and action == self.stop_action:
+                    widget.setStyleSheet("""
+                        QToolButton {
+                            background-color: #8b2635;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 8px 16px;
+                            color: white;
+                            min-width: 80px;
+                            font-weight: bold;
+                        }
+                        QToolButton:hover {
+                            background-color: #9b3645;
+                        }
+                        QToolButton:pressed {
+                            background-color: #7b1625;
+                        }
+                        QToolButton:disabled {
+                            background-color: #404040;
+                            color: #808080;
+                        }
+                    """)
 
     def check_software_status(self):
         """检查MiniQMT软件状态"""
@@ -1319,14 +1420,14 @@ class KhQuantGUI(QMainWindow):
         
         # 佣金比例
         self.commission_rate = QLineEdit()
-        self.commission_rate.setValidator(QDoubleValidator(0.0, 1.0, 4))
+        self.commission_rate.setValidator(QDoubleValidator(0.0, 1.0, 7))
         self.commission_rate.setText("0.0001")
         cost_layout.addWidget(QLabel("佣金比例:"), 1, 0)
         cost_layout.addWidget(self.commission_rate, 1, 1)
         
         # 印花税
         self.stamp_tax = QLineEdit()
-        self.stamp_tax.setValidator(QDoubleValidator(0.0, 1.0, 4))
+        self.stamp_tax.setValidator(QDoubleValidator(0.0, 1.0, 7))
         self.stamp_tax.setText("0.0005")
         cost_layout.addWidget(QLabel("卖出印花税:"), 2, 0)
         cost_layout.addWidget(self.stamp_tax, 2, 1)
@@ -2074,7 +2175,8 @@ class KhQuantGUI(QMainWindow):
     def update_status(self, message):
         """更新状态栏信息"""
         try:
-            self.statusBar().showMessage(message)  # 正确调用statusBar()方法
+            # 不再显示状态消息，保持状态栏简洁
+            pass
         except Exception as e:
             print(f"状态栏更新失败: {message}")  # 错误时至少输出到控制台
 
@@ -2142,13 +2244,14 @@ class KhQuantGUI(QMainWindow):
             # 显示并重置进度条 (只在回测模式下)
             if self.get_run_mode() == "backtest":
                 self.progress_bar.setValue(0)
-                self.progress_bar.show()
+                self.progress_text.setText("回测进度: 0%")
+                self.progress_container.show()
                 # 强制更新UI
                 QApplication.processEvents()
                 # 更新状态标签
                 self.status_label.setText("回测进行中...")
             else:
-                self.progress_bar.hide()
+                self.progress_container.hide()
             
             self.log_message("策略启动完成", "INFO")
             
@@ -2264,7 +2367,7 @@ class KhQuantGUI(QMainWindow):
                     return
             
             # 恢复窗口标题
-            self.setWindowTitle("看海量化交易系统")
+            self.setWindowTitle("看海量化回测系统")
             
             # 保存窗口状态和位置
             self.settings.setValue("windowState", self.saveState())
@@ -2356,7 +2459,7 @@ class KhQuantGUI(QMainWindow):
             
             # 更新窗口标题，显示当前配置文件名
             file_name = os.path.basename(file_path)
-            self.setWindowTitle(f"看海量化交易系统 - {file_name}")
+            self.setWindowTitle(f"看海量化回测系统 - {file_name}")
             
             # 在日志中记录成功加载
             self.log_message(f"配置已从以下位置加载: {file_path}", "INFO")
@@ -2436,9 +2539,9 @@ class KhQuantGUI(QMainWindow):
             if "min_commission" in trade_cost:
                 self.min_commission.setText(str(trade_cost["min_commission"]))
             if "commission_rate" in trade_cost:
-                self.commission_rate.setText(str(trade_cost["commission_rate"]))
+                self.commission_rate.setText(f"{trade_cost['commission_rate']:.7g}")
             if "stamp_tax_rate" in trade_cost:
-                self.stamp_tax.setText(str(trade_cost["stamp_tax_rate"]))
+                self.stamp_tax.setText(f"{trade_cost['stamp_tax_rate']:.7g}")
             if "flow_fee" in trade_cost:
                 self.flow_fee.setText(str(trade_cost["flow_fee"]))
             
@@ -2685,8 +2788,14 @@ class KhQuantGUI(QMainWindow):
                 stock_codes.append(code)
                 
         if stock_codes:
-            # 生成股票清单文件 - 源码模式
-            stock_list_dir = os.path.join(os.path.dirname(__file__), 'data', 'stock_list')
+            # 生成股票清单文件
+            if getattr(sys, 'frozen', False):
+                # 打包环境 - 使用用户文档目录
+                user_docs = os.path.expanduser("~/Documents")
+                stock_list_dir = os.path.join(user_docs, "KHQuant", "data", "stock_list")
+            else:
+                # 开发环境
+                stock_list_dir = os.path.join(os.path.dirname(__file__), 'data', 'stock_list')
             os.makedirs(stock_list_dir, exist_ok=True)
             stock_list_file = os.path.join(stock_list_dir, f"stock_list_{int(time.time())}.csv")
             
@@ -3030,8 +3139,8 @@ class KhQuantGUI(QMainWindow):
                             # 发射进度信号
                             self.progress_signal.emit(progress_value)
                             # 确保进度条可见
-                            if self.get_run_mode() == "backtest" and not self.progress_bar.isVisible():
-                                self.progress_bar.show()
+                            if self.get_run_mode() == "backtest" and not self.progress_container.isVisible():
+                                self.progress_container.show()
                     # 直接返回，不将进度消息添加到日志
                     return
                 except (IndexError, ValueError):
@@ -3113,7 +3222,7 @@ class KhQuantGUI(QMainWindow):
                 self.log_entries.append(log_entry)
                 
                 # 如果启用了延迟显示模式且策略正在运行，则添加到延迟日志队列
-                if self.delay_log_display and hasattr(self, 'strategy_is_running') and self.strategy_is_running:
+                if hasattr(self, 'delay_log_display') and self.delay_log_display and hasattr(self, 'strategy_is_running') and self.strategy_is_running:
                     self.delayed_logs.append(log_entry)
                     return  # 不立即显示
                 
@@ -3129,7 +3238,7 @@ class KhQuantGUI(QMainWindow):
                     )
             else:
                 # 即使是被跳过的系统日志，如果启用了延迟显示模式且策略正在运行，也要保存
-                if self.delay_log_display and hasattr(self, 'strategy_is_running') and self.strategy_is_running:
+                if hasattr(self, 'delay_log_display') and self.delay_log_display and hasattr(self, 'strategy_is_running') and self.strategy_is_running:
                     log_entry = {
                         'time': current_time,
                         'level': level,
@@ -3807,23 +3916,50 @@ class KhQuantGUI(QMainWindow):
                     logging.error(f"使用导入方式打开CSV数据管理模块失败: {str(e)}", exc_info=True)
                     # 继续尝试方法二
             # 方法二：使用子进程运行GUI.py
-            # 确定GUI.py的路径 - 源码模式
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            # 确定GUI.py的路径
+            if getattr(sys, 'frozen', False):
+                # 打包环境 - 在_internal目录中查找
+                if hasattr(sys, '_MEIPASS'):
+                    # PyInstaller打包环境
+                    base_dir = sys._MEIPASS
+                else:
+                    # 其他打包环境
+                    base_dir = os.path.dirname(sys.executable)
+            else:
+                # 开发环境
+                base_dir = os.path.dirname(os.path.abspath(__file__))
                 
             gui_path = os.path.join(base_dir, 'GUI.py')
             
             if os.path.exists(gui_path):
                 self.log_message(f"找到GUI.py文件，路径: {gui_path}", "INFO")
                 
-                # 使用子进程启动GUI.py - 源码模式
+                # 使用子进程启动GUI.py
                 import subprocess
-                python_executable = sys.executable
-                subprocess.Popen([python_executable, gui_path])
-                self.log_message("CSV数据管理模块已在新进程中启动", "INFO")
+                
+                if getattr(sys, 'frozen', False):
+                    # 在打包环境中，尝试查找GUI的可执行文件
+                    gui_exe_path = os.path.join(os.path.dirname(sys.executable), 'GUI.exe')
+                    if os.path.exists(gui_exe_path):
+                        subprocess.Popen([gui_exe_path])
+                        self.log_message("CSV数据管理模块已在新进程中启动", "INFO")
+                    else:
+                        # 如果没有独立的GUI.exe，提示用户
+                        self.log_message("打包环境中暂不支持独立的CSV数据管理模块", "WARNING")
+                        QMessageBox.information(self, "提示", "CSV数据处理功能已集成到主程序中，无需单独启动模块。")
+                else:
+                    # 开发环境中使用Python解释器启动
+                    python_executable = sys.executable
+                    subprocess.Popen([python_executable, gui_path])
+                    self.log_message("CSV数据管理模块已在新进程中启动", "INFO")
             else:
-                # 找不到GUI.py文件，提示错误
-                self.log_message(f"未找到GUI.py文件: {gui_path}", "ERROR")
-                QMessageBox.critical(self, "错误", f"无法找到GUI.py文件: {gui_path}")
+                if getattr(sys, 'frozen', False):
+                    # 在打包环境中，如果找不到GUI.py，提示功能已集成
+                    self.log_message("CSV数据处理功能已集成到主程序中", "INFO")
+                    QMessageBox.information(self, "提示", "CSV数据处理功能已集成到主程序中，无需单独启动模块。\n\n您可以直接在主界面中进行数据分析和处理。")
+                else:
+                    self.log_message(f"未找到GUI.py文件: {gui_path}", "ERROR")
+                    QMessageBox.critical(self, "错误", f"无法找到GUI.py文件: {gui_path}")
             
         except Exception as e:
             error_message = f"打开CSV数据管理模块时出错: {str(e)}"
@@ -3939,10 +4075,12 @@ class KhQuantGUI(QMainWindow):
             # 确保值在0-100之间
             value = max(0, min(value, 100))
             self.progress_bar.setValue(value)
+            if hasattr(self, 'progress_text') and self.progress_text:
+                self.progress_text.setText(f"回测进度: {value}%")
             
             # 确保进度条在回测模式下可见
-            if self.get_run_mode() == "backtest" and not self.progress_bar.isVisible():
-                self.progress_bar.show()
+            if self.get_run_mode() == "backtest" and not self.progress_container.isVisible():
+                self.progress_container.show()
 
     def save_config_as(self):
         """配置另存为
@@ -4034,7 +4172,7 @@ class KhQuantGUI(QMainWindow):
             
             # 更新窗口标题，显示当前配置文件名
             file_name = os.path.basename(file_path)
-            self.setWindowTitle(f"看海量化交易系统 - {file_name}")
+            self.setWindowTitle(f"看海量化回测系统 - {file_name}")
             
             # 记录日志
             self.log_message(f"配置已保存到: {file_path}", "INFO")
@@ -4224,19 +4362,58 @@ class KhQuantGUI(QMainWindow):
 
     def hide_progress(self):
         """隐藏进度条"""
-        self.progress_bar.hide()
+        self.progress_container.hide()
 
     def check_file_in_internal_dir(self, file_path):
-        """检测文件是否保存在危险目录内 - 源码模式下始终返回False
+        """检测文件是否保存在软件安装目录的_internal文件夹内
         
         Args:
             file_path: 要检测的文件路径
             
         Returns:
-            bool: 源码模式下始终返回False
+            bool: 如果文件在_internal目录内返回True，否则返回False
         """
-        # 源码模式下不存在内部目录的问题，始终返回False
-        return False
+        if not file_path:
+            return False
+            
+        try:
+            # 获取软件安装目录
+            if getattr(sys, 'frozen', False):
+                # 打包环境
+                exe_dir = os.path.dirname(sys.executable)
+                
+                # 检查多个可能的危险目录
+                dangerous_dirs = []
+                
+                if hasattr(sys, '_MEIPASS'):
+                    # PyInstaller打包环境，_MEIPASS就是_internal目录
+                    dangerous_dirs.append(sys._MEIPASS)
+                
+                # 添加可执行文件目录和_internal子目录
+                dangerous_dirs.extend([
+                    exe_dir,
+                    os.path.join(exe_dir, '_internal'),
+                    os.path.join(exe_dir, 'lib'),
+                    os.path.join(exe_dir, 'library')
+                ])
+                
+                # 检查文件是否在任何危险目录内
+                file_path = os.path.normpath(os.path.abspath(file_path))
+                
+                for dangerous_dir in dangerous_dirs:
+                    if os.path.exists(dangerous_dir):
+                        dangerous_dir = os.path.normpath(os.path.abspath(dangerous_dir))
+                        if file_path.startswith(dangerous_dir):
+                            return True
+                
+                return False
+            else:
+                # 开发环境，返回False（不在_internal目录）
+                return False
+            
+        except Exception as e:
+            logging.warning(f"检测文件路径时出错: {str(e)}")
+            return False
 
     def show_internal_dir_warning(self, config_file_path, strategy_file_path):
         """显示文件保存在_internal目录的警告对话框
@@ -4327,8 +4504,16 @@ class KhQuantGUI(QMainWindow):
         """初始化用户策略目录，复制默认策略文件"""
         user_strategies_dir = self.get_user_strategies_dir()
         
-        # 获取程序内置的默认策略文件路径 - 源码模式
-        default_strategies_dir = os.path.join(os.path.dirname(__file__), 'strategies')
+        # 获取程序内置的默认策略文件路径
+        if getattr(sys, 'frozen', False):
+            # 打包环境
+            if hasattr(sys, '_MEIPASS'):
+                default_strategies_dir = os.path.join(sys._MEIPASS, 'strategies')
+            else:
+                default_strategies_dir = os.path.join(os.path.dirname(sys.executable), 'strategies')
+        else:
+            # 开发环境
+            default_strategies_dir = os.path.join(os.path.dirname(__file__), 'strategies')
         
         # 如果用户策略目录为空，复制默认策略文件
         if os.path.exists(default_strategies_dir):
@@ -4441,16 +4626,54 @@ class NoWheelComboBox(QComboBox):
         # 忽略滚轮事件，不调用父类的wheelEvent
         event.ignore()
 
-# 自定义QDateEdit类，禁用滚轮事件
+# 自定义QDateEdit类，禁用滚轮事件并修复中文显示
 class NoWheelDateEdit(QDateEdit):
-    """禁用滚轮事件的QDateEdit"""
+    """禁用滚轮事件的QDateEdit，修复中文显示问题"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_font()
+        
+    def setup_font(self):
+        """设置字体，解决中文显示问题"""
+        try:
+            from PyQt5.QtGui import QFont, QFontDatabase
+            # 尝试设置支持中文的字体
+            font_families = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"]
+            for family in font_families:
+                if QFontDatabase().hasFamily(family):
+                    font = QFont(family, 9)
+                    font.setStyleHint(QFont.SansSerif)
+                    self.setFont(font)
+                    break
+        except Exception as e:
+            print(f"设置DateEdit字体时出错: {str(e)}")
+    
     def wheelEvent(self, event):
         # 忽略滚轮事件，不调用父类的wheelEvent
         event.ignore()
 
-# 自定义QTimeEdit类，禁用滚轮事件
+# 自定义QTimeEdit类，禁用滚轮事件并修复中文显示
 class NoWheelTimeEdit(QTimeEdit):
-    """禁用滚轮事件的QTimeEdit"""
+    """禁用滚轮事件的QTimeEdit，修复中文显示问题"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_font()
+        
+    def setup_font(self):
+        """设置字体，解决中文显示问题"""
+        try:
+            from PyQt5.QtGui import QFont, QFontDatabase
+            # 尝试设置支持中文的字体
+            font_families = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"]
+            for family in font_families:
+                if QFontDatabase().hasFamily(family):
+                    font = QFont(family, 9)
+                    font.setStyleHint(QFont.SansSerif)
+                    self.setFont(font)
+                    break
+        except Exception as e:
+            print(f"设置TimeEdit字体时出错: {str(e)}")
+    
     def wheelEvent(self, event):
         # 忽略滚轮事件，不调用父类的wheelEvent
         event.ignore()
@@ -4460,7 +4683,7 @@ class DisclaimerDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("看海量化交易系统 - 免责声明")
+        self.setWindowTitle("看海量化回测系统 - 免责声明")
         self.setModal(True)
         self.setFixedSize(800, 600)
         self.center_on_screen()
@@ -4527,7 +4750,7 @@ class DisclaimerDialog(QDialog):
         layout.addWidget(title_label)
         
         # 免责声明内容
-        disclaimer_text = """在使用"看海量化交易系统"（以下简称"本系统"）之前，请务必仔细阅读并充分理解本文的全部条款。这些条款构成了您与本系统作者之间关于使用本软件的重要约定。
+        disclaimer_text = """在使用"看海量化回测系统"（以下简称"本系统"）之前，请务必仔细阅读并充分理解本文的全部条款。这些条款构成了您与本系统作者之间关于使用本软件的重要约定。
 
 
 第一章  系统依赖与免责声明
@@ -4539,7 +4762,7 @@ class DisclaimerDialog(QDialog):
 本系统在运行过程中包含了数据有效性检验功能，会对从MiniQMT获取的数据进行基础的完整性和格式校验。但需要明确的是，这些检验仅为程序正常运行的技术保障，不能等同于对数据准确性的担保。市场数据的准确性和及时性完全取决于券商MiniQMT及其上游数据源。
 
 ■ 核心功能定位
-请注意，当前版本的"看海量化交易系统"是一款策略回测与研究平台，其核心功能是历史数据验证，当前官方版本不包含任何直接执行实盘交易的功能。
+请注意，当前版本的"看海量化回测系统"是一款策略回测与研究平台，其核心功能是历史数据验证，当前官方版本不包含任何直接执行实盘交易的功能。
 
 ■ 全面责任界定
 本系统作者的责任仅限于提供软件工具本身。使用本软件过程中遇到的任何问题，包括但不限于系统故障、数据错误、策略失效、操作失误、电脑故障等，均由用户自行承担全部责任。对于因以下原因导致的任何直接或间接损失，作者不承担任何形式的法律或经济责任：
@@ -4611,7 +4834,7 @@ class DisclaimerDialog(QDialog):
 ■ 重要提示：本系统不构成任何投资建议
 
 ■ 教育与研究目的
-"看海量化交易系统"及其所有相关内容（包括示例策略、代码、文档、社区讨论等）的唯一目的，是进行量化编程技术交流、策略思想探讨和金融市场研究。
+"看海量化回测系统"及其所有相关内容（包括示例策略、代码、文档、社区讨论等）的唯一目的，是进行量化编程技术交流、策略思想探讨和金融市场研究。
 
 ■ 非投资顾问
 本系统的任何功能、输出信息（如回测报告、性能指标）及示例代码，均不应被解释为任何形式的投资建议或交易推荐。历史回测表现不代表未来实际收益，过往的业绩无法预示未来的结果。
@@ -4674,6 +4897,50 @@ def main():
     try:
         app = QApplication(sys.argv)
         
+        # 设置字体和编码，解决时间选择器乱码问题
+        try:
+            # 设置应用程序的默认字体
+            from PyQt5.QtGui import QFont, QFontDatabase
+            
+            # 添加系统字体
+            font_families = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS", "DejaVu Sans"]
+            default_font = None
+            
+            for family in font_families:
+                if QFontDatabase().hasFamily(family):
+                    default_font = QFont(family, 9)
+                    break
+            
+            if default_font:
+                app.setFont(default_font)
+                print(f"已设置应用字体: {default_font.family()}")
+            else:
+                # 使用系统默认字体
+                default_font = QFont()
+                default_font.setPointSize(9)
+                app.setFont(default_font)
+                print("使用系统默认字体")
+            
+            # 设置Qt的本地化
+            from PyQt5.QtCore import QLocale, QTranslator
+            
+            # 设置中文本地化
+            locale = QLocale(QLocale.Chinese, QLocale.China)
+            QLocale.setDefault(locale)
+            
+            # 创建并安装Qt翻译器
+            qt_translator = QTranslator()
+            # Qt标准控件的中文翻译
+            if qt_translator.load(locale, "qt", "_", ":/translations/"):
+                app.installTranslator(qt_translator)
+            elif qt_translator.load("qt_zh_CN", ":/translations/"):
+                app.installTranslator(qt_translator)
+            
+            print("已设置中文本地化")
+            
+        except Exception as e:
+            print(f"设置字体和本地化时出错: {str(e)}")
+        
         # 禁用LibPNG警告消息
         os.environ["QT_IMAGEIO_MAXALLOC"] = "0"  # 禁用图像大小限制警告
         os.environ["QT_LOGGING_RULES"] = "qt.svg.warning=false;qt.png.warning=false"  # 禁用SVG和PNG相关警告
@@ -4729,8 +4996,14 @@ def main():
             else:
                 logging.warning(f"图标文件不存在: {icon_file} 和 {icon_file_png}")
         
-        # 获取图标目录路径（用于启动画面） - 源码模式
-        icon_path = os.path.join(os.path.dirname(__file__), 'icons')
+        # 获取图标目录路径（用于启动画面）
+        if getattr(sys, 'frozen', False):
+            if hasattr(sys, '_MEIPASS'):
+                icon_path = os.path.join(sys._MEIPASS, 'icons')
+            else:
+                icon_path = os.path.join(os.path.dirname(sys.executable), 'icons')
+        else:
+            icon_path = os.path.join(os.path.dirname(__file__), 'icons')
             
         logging.info(f"图标目录路径: {icon_path}")
             

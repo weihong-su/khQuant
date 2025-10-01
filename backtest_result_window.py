@@ -8,7 +8,7 @@ matplotlib.use('Qt5Agg')
 # 其他导入
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                           QLabel, QTabWidget, QTableWidget, QTableWidgetItem,
-                          QGroupBox, QSplitter, QGridLayout, QHeaderView)
+                          QGroupBox, QSplitter, QGridLayout, QHeaderView, QSizePolicy)
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QPalette, QColor, QIcon
 import matplotlib.pyplot as plt
@@ -37,6 +37,9 @@ class BacktestResultWindow(QMainWindow):
     def __init__(self, backtest_dir):
         super().__init__()
         self.backtest_dir = backtest_dir
+        
+        # 检测屏幕分辨率并设置字体缩放比例
+        self.font_scale = self.detect_screen_resolution()
         
         # 从设置读取无风险收益率
         settings = QSettings('KHQuant', 'StockAnalyzer')
@@ -97,130 +100,139 @@ class BacktestResultWindow(QMainWindow):
         except Exception as e:
             print(f"加载图标时出错: {str(e)}")
             return False
+    
+    def detect_screen_resolution(self):
+        """检测屏幕分辨率并返回字体缩放比例"""
+        from PyQt5.QtWidgets import QApplication
+        screen = QApplication.desktop().screenGeometry()
+        width = screen.width()
+        height = screen.height()
         
-    def apply_dark_theme(self):
-        """应用深色主题样式"""
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
+        # 根据屏幕宽度确定字体缩放比例
+        if width >= 3840:  # 4K及以上分辨率
+            return 1.8
+        elif width >= 2560:  # 2K分辨率
+            return 1.4
+        elif width >= 1920:  # 1080P分辨率
+            return 1.0
+        else:  # 低分辨率
+            return 0.8
+
+    def get_scaled_stylesheet(self):
+        """获取根据分辨率缩放的样式表"""
+        # 基础字体大小
+        base_sizes = {
+            'small': 12,
+            'normal': 14, 
+            'large': 16,
+            'xl': 18,
+            'xxl': 24,
+            'xxxl': 30
+        }
+        
+        # 计算缩放后的字体大小
+        scaled_sizes = {k: int(v * self.font_scale) for k, v in base_sizes.items()}
+        
+        return f"""
+            QMainWindow, QWidget {{
                 background-color: #2b2b2b;
                 color: #e8e8e8;
-            }
+                font-size: {scaled_sizes['normal']}px;
+            }}
             
-            QGroupBox {
+            QLabel {{
+                color: #e8e8e8;
+                font-size: {scaled_sizes['normal']}px;
+                background-color: transparent;
+            }}
+            
+            QTabWidget::pane {{
+                border: 1px solid #3c3c3c;
+                background-color: #2b2b2b;
+            }}
+            
+            QTabBar::tab {{
+                background-color: #3c3c3c;
+                color: #e8e8e8;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background-color: #2b2b2b;
+                border-bottom: 2px solid #0078d7;
+            }}
+            
+            QTabBar::tab:hover {{
+                background-color: #4a4a4a;
+            }}
+            
+            QTableWidget {{
                 background-color: #333333;
-                border: 1px solid #404040;
+                alternate-background-color: #383838;
+                border: 1px solid #3c3c3c;
+                color: #e8e8e8;
+                gridline-color: #3c3c3c;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            QTableWidget::item {{
+                padding: 5px;
+                background-color: transparent;
+                border: none;
+            }}
+            
+            QTableWidget::item:selected {{
+                background-color: #0078d7;
+                color: #ffffff;
+            }}
+            
+            QHeaderView::section {{
+                background-color: #3a3a3a;
+                color: #e8e8e8;
+                padding: 8px;
+                border: none;
+                border-right: 1px solid #454545;
+                border-bottom: 1px solid #454545;
+                font-weight: bold;
+                font-size: {scaled_sizes['normal']}px;
+            }}
+            
+            QGroupBox {{
+                background-color: #333333;
+                border: 1px solid #4a4a4a;
                 border-radius: 6px;
                 margin-top: 1em;
-                padding: 1em;
+                padding-top: 1em;
                 color: #e8e8e8;
-            }
+                font-size: {scaled_sizes['normal']}px;
+            }}
             
-            QGroupBox::title {
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
                 color: #e8e8e8;
                 font-weight: bold;
                 background-color: #333333;
-            }
-            
-            QLabel {
-                color: #e8e8e8;
-                background-color: transparent;
-                padding: 2px;
-            }
-            
-            QTableWidget {
-                background-color: #333333;
-                alternate-background-color: #383838;
-                border: 1px solid #404040;
-                color: #e8e8e8;
-                gridline-color: #404040;
-            }
-            
-            QTableWidget::item {
-                padding: 5px;
-                background-color: transparent;
-            }
-            
-            QTableWidget::item:selected {
-                background-color: #505050;
-                color: #ffffff;
-            }
-            
-            QHeaderView::section {
-                background-color: #404040;
-                color: #e8e8e8;
-                padding: 8px;
-                border: none;
-                border-right: 1px solid #4d4d4d;
-                border-bottom: 1px solid #4d4d4d;
-                font-weight: bold;
-            }
-            
-            QTabWidget::pane {
-                border: none;
-                background: transparent;
-            }
-            
-            QTabBar::tab {
-                min-width: 180px;
-                padding: 12px 15px;
-                margin: 0px 2px;
-                color: #a0a0a0;
-                font-size: 20px;
-                font-weight: bold;
-                background: #2d2d2d;
-                border: 2px solid #404040;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                height: 42px;
-            }
-            
-            QTabBar::tab:selected {
-                color: #ffffff;
-                background: #2b2b2b;
-                border-bottom: 2px solid #007acc;
-            }
-            
-            QTabBar::tab:hover {
-                background: #353535;
-                color: #e8e8e8;
-            }
-            
-            QTabBar::tab:!selected {
-                margin-top: 2px;
-            }
-            
-            QScrollBar:vertical {
-                background-color: #2b2b2b;
-                width: 12px;
-                margin: 0px;
-            }
-            
-            QScrollBar::handle:vertical {
-                background-color: #505050;
-                min-height: 20px;
-                border-radius: 6px;
-                margin: 2px;
-            }
-            
-            QScrollBar::handle:vertical:hover {
-                background-color: #606060;
-            }
-            
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
+                font-size: {scaled_sizes['normal']}px;
+            }}
+        """
+        
+    def apply_dark_theme(self):
+        """应用深色主题样式"""
+        # 使用缩放后的样式表
+        self.setStyleSheet(self.get_scaled_stylesheet())
         
     def init_ui(self):
-        self.resize(1600, 1000)  # 进一步增加窗口默认高度，为收益曲线提供更多空间
+        # 根据分辨率自适应窗口大小
+        base_width, base_height = 1600, 1000
+        scaled_width = int(base_width * self.font_scale)
+        scaled_height = int(base_height * self.font_scale)
+        self.resize(scaled_width, scaled_height)
         
         # 创建主窗口部件
         main_widget = QWidget()
@@ -242,24 +254,26 @@ class BacktestResultWindow(QMainWindow):
         
         # 基本信息面板
         info_group = QGroupBox("基本信息")
-        info_group.setStyleSheet("""
-            QGroupBox {
-                font-size: 16px;
+        info_group.setStyleSheet(f"""
+            QGroupBox {{
+                font-size: {int(16 * self.font_scale)}px;
                 font-weight: bold;
                 background-color: #2d2d2d;
                 border: 2px solid #404040;
                 border-radius: 8px;
-                padding: 5px;
-            }
-            QGroupBox::title {
-                font-size: 16px;
-                padding: 0 6px;
+                padding: {int(5 * self.font_scale)}px;
+            }}
+            QGroupBox::title {{
+                font-size: {int(16 * self.font_scale)}px;
+                padding: 0 {int(6 * self.font_scale)}px;
                 background-color: #2d2d2d;
-            }
+            }}
         """)
         info_layout = QGridLayout()
-        info_layout.setSpacing(2)  # 大幅度减小行间距，使显示非常紧凑
-        info_layout.setContentsMargins(12, 10, 12, 8)  # 大幅度减小内边距
+        info_layout.setVerticalSpacing(int(2 * self.font_scale))  # 减小行间距，更紧凑
+        info_layout.setHorizontalSpacing(int(8 * self.font_scale))  # 保持合适的列间距
+        info_layout.setContentsMargins(int(8 * self.font_scale), int(6 * self.font_scale), 
+                                      int(8 * self.font_scale), int(6 * self.font_scale))
         self.info_labels = {}
         info_items = ["策略名称", "回测区间", "初始资金", "最终资金", 
                      "总收益率", "年化收益率", "基准收益率", "基准年化收益率", "最大回撤", "夏普比率",
@@ -274,75 +288,85 @@ class BacktestResultWindow(QMainWindow):
         # 调整标签和值的宽度以确保足够的显示空间
         for i, item in enumerate(col1_items):
             label = QLabel(f"{item}:")
-            label.setStyleSheet("""
+            label.setStyleSheet(f"""
                 font-weight: bold; 
-                font-size: 14px;
+                font-size: {int(14 * self.font_scale)}px;
                 color: #a0a0a0;
+                background-color: transparent;
             """)
-            label.setMinimumWidth(100)  # 进一步减小标签最小宽度
+            label.setMinimumWidth(int(100 * self.font_scale))  # 标签固定最小宽度
+            label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)  # 标签宽度固定，高度自适应
             
             value = QLabel("--")
-            value.setStyleSheet("""
+            value.setStyleSheet(f"""
                 color: #e8e8e8; 
-                font-size: 14px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-family: 'Consolas', 'Microsoft YaHei', monospace;
+                background-color: transparent;
             """)
-            value.setMinimumWidth(160)  # 进一步减小值的最小宽度
-            value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 确保文本左对齐
+            value.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # 数值宽度自适应内容
+            value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            value.setWordWrap(False)  # 禁用自动换行
             
-            info_layout.addWidget(label, i, 0, Qt.AlignRight)  # 标签右对齐
-            info_layout.addWidget(value, i, 1, Qt.AlignLeft)   # 值左对齐
+            info_layout.addWidget(label, i, 0, Qt.AlignRight)
+            info_layout.addWidget(value, i, 1, Qt.AlignLeft)
             self.info_labels[item] = value
         
         # 确保两列之间有足够的间距
-        info_layout.setColumnMinimumWidth(2, 8)  # 大幅度减小两列之间的间距
+        info_layout.setColumnMinimumWidth(2, int(20 * self.font_scale))  # 增加列间距
         
         for i, item in enumerate(col2_items):
             label = QLabel(f"{item}:")
-            label.setStyleSheet("""
-                font-weight: bold; 
-                font-size: 14px;
+            label.setStyleSheet(f"""
+                font-weight: bold;
+                font-size: {int(14 * self.font_scale)}px;
                 color: #a0a0a0;
+                background-color: transparent;
             """)
-            label.setMinimumWidth(100)  # 进一步减小标签最小宽度
+            label.setMinimumWidth(int(100 * self.font_scale))  # 标签固定最小宽度
+            label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)  # 标签宽度固定，高度自适应
             
             value = QLabel("--")
-            value.setStyleSheet("""
+            value.setStyleSheet(f"""
                 color: #e8e8e8; 
-                font-size: 14px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-family: 'Consolas', 'Microsoft YaHei', monospace;
+                background-color: transparent;
             """)
-            value.setMinimumWidth(160)  # 进一步减小值的最小宽度
-            value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 确保文本左对齐
+            value.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # 数值宽度自适应内容
+            value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            value.setWordWrap(False)  # 禁用自动换行
             
-            info_layout.addWidget(label, i, 3, Qt.AlignRight)  # 标签右对齐
-            info_layout.addWidget(value, i, 4, Qt.AlignLeft)   # 值左对齐
+            info_layout.addWidget(label, i, 3, Qt.AlignRight)
+            info_layout.addWidget(value, i, 4, Qt.AlignLeft)
             self.info_labels[item] = value
         
         info_group.setLayout(info_layout)
-        info_group.setMinimumWidth(550)  # 大幅度减小最小宽度，让信息更紧凑
-        info_group.setMaximumWidth(600)   # 大幅度减小最大宽度限制
-        top_layout.addWidget(info_group)
+        # 设置基本信息面板的大小策略，限制其宽度
+        info_group.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        info_group.setMaximumWidth(int(400 * self.font_scale))  # 限制最大宽度
+        top_layout.addWidget(info_group, 0)  # 伸展因子为0，不拉伸
         
         # 收益曲线图表
         chart_group = QGroupBox("收益曲线")
-        chart_group.setStyleSheet("""
-            QGroupBox {
-                font-size: 16px;
+        chart_group.setStyleSheet(f"""
+            QGroupBox {{
+                font-size: {int(16 * self.font_scale)}px;
                 font-weight: bold;
                 background-color: #2d2d2d;
                 border: 2px solid #404040;
                 border-radius: 8px;
-                padding: 15px;
-            }
-            QGroupBox::title {
-                font-size: 16px;
-                padding: 0 8px;
+                padding: {int(15 * self.font_scale)}px;
+            }}
+            QGroupBox::title {{
+                font-size: {int(16 * self.font_scale)}px;
+                padding: 0 {int(8 * self.font_scale)}px;
                 background-color: #2d2d2d;
-            }
+            }}
         """)
         chart_layout = QVBoxLayout()
-        chart_layout.setContentsMargins(20, 25, 20, 20)  # 增加图表内边距
+        chart_layout.setContentsMargins(int(8 * self.font_scale), int(10 * self.font_scale), 
+                                       int(8 * self.font_scale), int(8 * self.font_scale))  # 减少图表内边距，让图表更饱满
         
         # 创建图表并保存canvas引用
         canvas = self.create_chart()
@@ -357,73 +381,74 @@ class BacktestResultWindow(QMainWindow):
         chart_layout.addWidget(self.chart_view)
         chart_group.setLayout(chart_layout)
         
-        # 设置图表组件的最小尺寸，确保有足够空间显示标题和坐标轴
-        chart_group.setMinimumSize(600, 400)
+        # 设置图表组件的大小策略，让其占据更多空间
+        chart_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        chart_group.setMinimumSize(int(600 * self.font_scale), int(400 * self.font_scale))
         
-        top_layout.addWidget(chart_group)
+        top_layout.addWidget(chart_group, 1)  # 伸展因子为1，占据剩余空间
         
         top_widget.setLayout(top_layout)
         splitter.addWidget(top_widget)
         
         # 下部分：Tab页面
         tab_widget = QTabWidget()
-        tab_widget.setStyleSheet("""
-            QTabWidget::pane {
+        tab_widget.setStyleSheet(f"""
+            QTabWidget::pane {{
                 border: 2px solid #404040;
                 border-radius: 8px;
                 background: #2d2d2d;
                 margin-top: -2px;
-            }
-            QTabBar::tab {
-                min-width: 100px;
-                padding: 8px 12px;
+            }}
+            QTabBar::tab {{
+                min-width: {int(100 * self.font_scale)}px;
+                padding: {int(8 * self.font_scale)}px {int(12 * self.font_scale)}px;
                 margin: 0px 2px;
                 color: #a0a0a0;
-                font-size: 14px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-weight: bold;
                 background: #2d2d2d;
                 border: 2px solid #404040;
                 border-bottom: none;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
-            }
-            QTabBar::tab:selected {
+            }}
+            QTabBar::tab:selected {{
                 color: #ffffff;
                 background: #333333;
                 border-bottom: 2px solid #007acc;
-            }
-            QTabBar::tab:hover {
+            }}
+            QTabBar::tab:hover {{
                 background: #353535;
                 color: #e8e8e8;
-            }
+            }}
         """)
         
         # 交易记录标签页
         self.trades_table = QTableWidget()
-        self.trades_table.setStyleSheet("""
-            QTableWidget {
+        self.trades_table.setStyleSheet(f"""
+            QTableWidget {{
                 background-color: #2d2d2d;
                 gridline-color: #404040;
                 color: #e8e8e8;
-                font-size: 14px;
-            }
-            QTableWidget::item {
-                padding: 6px;
+                font-size: {int(14 * self.font_scale)}px;
+            }}
+            QTableWidget::item {{
+                padding: {int(6 * self.font_scale)}px;
                 border-bottom: 1px solid #404040;
-            }
-            QHeaderView::section {
+            }}
+            QHeaderView::section {{
                 background-color: #333333;
                 color: #e8e8e8;
-                font-size: 14px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-weight: bold;
-                padding: 10px 6px;
+                padding: {int(10 * self.font_scale)}px {int(6 * self.font_scale)}px;
                 border: none;
                 border-right: 1px solid #404040;
                 border-bottom: 2px solid #404040;
-            }
-            QHeaderView::section:hover {
+            }}
+            QHeaderView::section:hover {{
                 background-color: #383838;
-            }
+            }}
         """)
         self.trades_table.setColumnCount(7)
         self.trades_table.setHorizontalHeaderLabels(
@@ -436,30 +461,30 @@ class BacktestResultWindow(QMainWindow):
         
         # 每日收益标签页
         self.daily_stats_table = QTableWidget()
-        self.daily_stats_table.setStyleSheet("""
-            QTableWidget {
+        self.daily_stats_table.setStyleSheet(f"""
+            QTableWidget {{
                 background-color: #2d2d2d;
                 gridline-color: #404040;
                 color: #e8e8e8;
-                font-size: 14px;
-            }
-            QTableWidget::item {
-                padding: 6px;
+                font-size: {int(14 * self.font_scale)}px;
+            }}
+            QTableWidget::item {{
+                padding: {int(6 * self.font_scale)}px;
                 border-bottom: 1px solid #404040;
-            }
-            QHeaderView::section {
+            }}
+            QHeaderView::section {{
                 background-color: #333333;
                 color: #e8e8e8;
-                font-size: 14px;
+                font-size: {int(14 * self.font_scale)}px;
                 font-weight: bold;
-                padding: 10px 6px;
+                padding: {int(10 * self.font_scale)}px {int(6 * self.font_scale)}px;
                 border: none;
                 border-right: 1px solid #404040;
                 border-bottom: 2px solid #404040;
-            }
-            QHeaderView::section:hover {
+            }}
+            QHeaderView::section:hover {{
                 background-color: #383838;
-            }
+            }}
         """)
         self.daily_stats_table.setColumnCount(5)
         self.daily_stats_table.setHorizontalHeaderLabels(
@@ -482,20 +507,20 @@ class BacktestResultWindow(QMainWindow):
         
         # 收益分布图
         returns_dist_group = QGroupBox("收益分布")
-        returns_dist_group.setStyleSheet("""
-            QGroupBox {
-                font-size: 16px;
+        returns_dist_group.setStyleSheet(f"""
+            QGroupBox {{
+                font-size: {int(16 * self.font_scale)}px;
                 font-weight: bold;
                 background-color: #2d2d2d;
                 border: 2px solid #404040;
                 border-radius: 8px;
-                padding: 12px;
-            }
-            QGroupBox::title {
-                font-size: 16px;
-                padding: 0 8px;
+                padding: {int(12 * self.font_scale)}px;
+            }}
+            QGroupBox::title {{
+                font-size: {int(16 * self.font_scale)}px;
+                padding: 0 {int(8 * self.font_scale)}px;
                 background-color: #2d2d2d;
-            }
+            }}
         """)
         returns_dist_layout = QVBoxLayout()
         self.returns_dist_figure = Figure(figsize=(5, 4), facecolor='#2d2d2d')
@@ -505,20 +530,20 @@ class BacktestResultWindow(QMainWindow):
         
         # 添加月度收益热力图
         monthly_returns_group = QGroupBox("月度收益热力图")
-        monthly_returns_group.setStyleSheet("""
-            QGroupBox {
-                font-size: 16px;
+        monthly_returns_group.setStyleSheet(f"""
+            QGroupBox {{
+                font-size: {int(16 * self.font_scale)}px;
                 font-weight: bold;
                 background-color: #2d2d2d;
                 border: 2px solid #404040;
                 border-radius: 8px;
-                padding: 12px;
-            }
-            QGroupBox::title {
-                font-size: 16px;
-                padding: 0 8px;
+                padding: {int(12 * self.font_scale)}px;
+            }}
+            QGroupBox::title {{
+                font-size: {int(16 * self.font_scale)}px;
+                padding: 0 {int(8 * self.font_scale)}px;
                 background-color: #2d2d2d;
-            }
+            }}
         """)
         monthly_returns_layout = QVBoxLayout()
         self.monthly_returns_figure = Figure(figsize=(5, 4), facecolor='#2d2d2d')
@@ -563,34 +588,45 @@ class BacktestResultWindow(QMainWindow):
         self.ax_pnl = fig.add_subplot(gs[5, 0], sharex=self.ax)  # 第6行用于盈亏分析图
         self.ax_trades = fig.add_subplot(gs[6, 0], sharex=self.ax)  # 第7行用于成交记录图
         
-        # 设置上方子图（收益曲线）
-        self.ax.set_title("策略收益与基准对比", color='#e8e8e8', pad=25, fontsize=12, fontweight='bold')
-        self.ax.set_facecolor('#2d2d2d')
-        self.ax.set_ylabel("净值", color='#a0a0a0', fontsize=10)
+        # 根据字体缩放计算图表字体大小，适中调整
+        title_fontsize = int(16 * self.font_scale)  # 适中的标题字体
+        label_fontsize = int(13 * self.font_scale)  # 适中的标签字体
+        tick_fontsize = int(11 * self.font_scale)   # 适中的刻度字体
         
-        # 隐藏上方子图的x轴标签
+        # 设置上方子图（收益曲线）
+        self.ax.set_title("策略收益与基准对比", color='#e8e8e8', pad=int(20 * self.font_scale), 
+                         fontsize=title_fontsize, fontweight='bold')
+        self.ax.set_facecolor('#2d2d2d')
+        self.ax.set_ylabel("净值", color='#a0a0a0', fontsize=label_fontsize)
+        
+        # 隐藏上方子图的x轴标签，设置y轴刻度字体大小
         self.ax.tick_params(axis='x', labelbottom=False)
+        self.ax.tick_params(axis='y', labelsize=tick_fontsize, colors='#a0a0a0')
         
         # 设置回撤曲线子图
         self.ax_drawdown.set_facecolor('#2d2d2d')
-        self.ax_drawdown.set_ylabel("回撤率 (%)", color='#a0a0a0', fontsize=10)
-        # 隐藏回撤子图的x轴标签
+        self.ax_drawdown.set_ylabel("回撤率 (%)", color='#a0a0a0', fontsize=label_fontsize)
+        # 隐藏回撤子图的x轴标签，设置y轴刻度字体大小
         self.ax_drawdown.tick_params(axis='x', labelbottom=False)
+        self.ax_drawdown.tick_params(axis='y', labelsize=tick_fontsize, colors='#a0a0a0')
         
         # 设置盈亏分析图子图
         self.ax_pnl.set_facecolor('#2d2d2d')
-        self.ax_pnl.set_ylabel("日盈亏", color='#a0a0a0', fontsize=10)
-        # 隐藏盈亏分析图子图的x轴标签
+        self.ax_pnl.set_ylabel("日盈亏", color='#a0a0a0', fontsize=label_fontsize)
+        # 隐藏盈亏分析图子图的x轴标签，设置y轴刻度字体大小
         self.ax_pnl.tick_params(axis='x', labelbottom=False)
+        self.ax_pnl.tick_params(axis='y', labelsize=tick_fontsize, colors='#a0a0a0')
         
         # 设置成交记录图子图
         self.ax_trades.set_facecolor('#2d2d2d')
-        self.ax_trades.set_ylabel("买入/卖出量", color='#a0a0a0', fontsize=10)
-        self.ax_trades.set_xlabel("时间", color='#a0a0a0', fontsize=10)
+        self.ax_trades.set_ylabel("买入/卖出量", color='#a0a0a0', fontsize=label_fontsize)
+        #self.ax_trades.set_xlabel("时间", color='#a0a0a0', fontsize=label_fontsize)
+        # 设置成交记录图的刻度字体大小
+        self.ax_trades.tick_params(axis='both', labelsize=tick_fontsize, colors='#a0a0a0')
         
         # 设置所有子图的基本样式
         for a in [self.ax, self.ax_drawdown, self.ax_pnl, self.ax_trades]:
-            a.tick_params(axis='both', colors='#a0a0a0', labelsize=10)
+            a.tick_params(axis='both', colors='#a0a0a0', labelsize=tick_fontsize)
             a.grid(True, linestyle='--', alpha=0.1, color='#808080')
             
             for spine in a.spines.values():
@@ -599,8 +635,8 @@ class BacktestResultWindow(QMainWindow):
         # 特别设置：反转回撤图的y轴（使回撤为负值显示在下方）
         self.ax_drawdown.invert_yaxis()
         
-        # 调整图表边距，增加边距以确保标题、坐标轴和标注完整显示
-        fig.subplots_adjust(left=0.18, right=0.90, top=0.90, bottom=0.18, hspace=0.25)  # 增加右边距以容纳标注
+        # 调整图表边距，为字体留出适当空间避免遮挡
+        fig.subplots_adjust(left=0.10, right=0.96, top=0.92, bottom=0.12, hspace=0.18)  # 适当增加边距以容纳较大字体
         
         # 初始化图表元素为None，避免悬停事件中的错误
         self.v_line_ax = None
@@ -620,7 +656,7 @@ class BacktestResultWindow(QMainWindow):
         try:
             if hasattr(self, 'chart_view') and self.chart_view:
                 # 重新调整布局以确保标题、坐标轴和标注完整显示
-                self.chart_view.figure.subplots_adjust(left=0.18, right=0.90, top=0.90, bottom=0.18, hspace=0.25)
+                self.chart_view.figure.subplots_adjust(left=0.10, right=0.96, top=0.92, bottom=0.12, hspace=0.18)
                 # 重绘图表
                 self.chart_view.draw_idle()
         except Exception as e:
@@ -830,6 +866,24 @@ class BacktestResultWindow(QMainWindow):
             import traceback
             print(traceback.format_exc())
 
+    def set_value_color(self, label, value_str, numeric_value):
+        """根据数值正负设置颜色：正数红色，负数绿色"""
+        if numeric_value > 0:
+            color = "#ff4444"  # 红色 
+        elif numeric_value < 0:
+            color = "#44ff44"  # 绿色
+        else:
+            color = "#e8e8e8"  # 中性色（原色）
+        
+        # 更新标签文本和颜色
+        label.setText(value_str)
+        label.setStyleSheet(f"""
+            color: {color}; 
+            font-size: {int(14 * self.font_scale)}px;
+            font-family: 'Consolas', 'Microsoft YaHei', monospace;
+            background-color: transparent;
+        """)
+
     def update_basic_info(self, config, daily_stats_df):
         """更新基本信息面板"""
         try:
@@ -864,9 +918,9 @@ class BacktestResultWindow(QMainWindow):
                 # 计算总收益率
                 if init_capital > 0:
                     total_return = (final_capital - init_capital) / init_capital * 100
-                    self.info_labels["总收益率"].setText(f"{total_return:+.2f}%")
+                    self.set_value_color(self.info_labels["总收益率"], f"{total_return:+.2f}%", total_return)
                 else:
-                    self.info_labels["总收益率"].setText("0.00%")
+                    self.set_value_color(self.info_labels["总收益率"], "0.00%", 0)
                 
                 # 计算年化收益率
                 if len(daily_stats_df) > 1:
@@ -891,11 +945,11 @@ class BacktestResultWindow(QMainWindow):
                         # 其中R是总收益率(小数形式)，n是交易日天数，250是一年的交易日数
                         total_return_decimal = (final_capital / init_capital) - 1
                         annual_return = (pow(1 + total_return_decimal, 250/days) - 1) * 100
-                        self.info_labels["年化收益率"].setText(f"{annual_return:+.2f}%")
+                        self.set_value_color(self.info_labels["年化收益率"], f"{annual_return:+.2f}%", annual_return)
                     else:
-                        self.info_labels["年化收益率"].setText("0.00%")
+                        self.set_value_color(self.info_labels["年化收益率"], "0.00%", 0)
                 else:
-                    self.info_labels["年化收益率"].setText("0.00%")
+                    self.set_value_color(self.info_labels["年化收益率"], "0.00%", 0)
                 
                 # 计算最大回撤
                 max_drawdown = self.calculate_max_drawdown(daily_stats_df['total_asset'])
@@ -913,17 +967,17 @@ class BacktestResultWindow(QMainWindow):
                     print(f"daily_returns前5个值: {daily_returns.head(5).tolist()}")
                     
                     sharpe_ratio = self.calculate_sharpe_ratio(daily_returns)
-                    self.info_labels["夏普比率"].setText(f"{sharpe_ratio:+.2f}")
+                    self.set_value_color(self.info_labels["夏普比率"], f"{sharpe_ratio:+.2f}", sharpe_ratio)
                 else:
-                    self.info_labels["夏普比率"].setText("0.00")
+                    self.set_value_color(self.info_labels["夏普比率"], "0.00", 0)
                     print("警告: daily_stats_df中没有'daily_return'列")
                 
                 # 计算索提诺比率
                 if 'daily_return' in daily_stats_df.columns:
                     sortino_ratio = self.calculate_sortino_ratio(daily_stats_df['daily_return'])
-                    self.info_labels["索提诺比率"].setText(f"{sortino_ratio:+.2f}")
+                    self.set_value_color(self.info_labels["索提诺比率"], f"{sortino_ratio:+.2f}", sortino_ratio)
                 else:
-                    self.info_labels["索提诺比率"].setText("0.00")
+                    self.set_value_color(self.info_labels["索提诺比率"], "0.00", 0)
                 
                 # 计算阿尔法和贝塔
                 # 需要基准收益率数据
@@ -943,7 +997,7 @@ class BacktestResultWindow(QMainWindow):
                             
                             # 添加基准收益率信息
                             if "基准收益率" in self.info_labels:
-                                self.info_labels["基准收益率"].setText(f"{benchmark_return:+.2f}%")
+                                self.set_value_color(self.info_labels["基准收益率"], f"{benchmark_return:+.2f}%", benchmark_return)
                             else:
                                 # 如果标签不存在，则在这里添加
                                 print("注意: 基准收益率标签不存在，请确保界面布局已包含该标签")
@@ -954,7 +1008,7 @@ class BacktestResultWindow(QMainWindow):
                                 
                                 # 添加基准年化收益率信息
                                 if "基准年化收益率" in self.info_labels:
-                                    self.info_labels["基准年化收益率"].setText(f"{annualized_benchmark_return:+.2f}%")
+                                    self.set_value_color(self.info_labels["基准年化收益率"], f"{annualized_benchmark_return:+.2f}%", annualized_benchmark_return)
                                 else:
                                     # 如果标签不存在，则在这里添加
                                     print("注意: 基准年化收益率标签不存在，请确保界面布局已包含该标签")
@@ -974,7 +1028,7 @@ class BacktestResultWindow(QMainWindow):
                                 if days > 0 and init_capital > 0:
                                     # 使用新方法计算Alpha
                                     alpha = self.calculate_alpha(annual_return, annualized_benchmark_return, beta)
-                                    self.info_labels["阿尔法"].setText(f"{alpha:+.4f}")
+                                    self.set_value_color(self.info_labels["阿尔法"], f"{alpha:+.4f}", alpha)
                                 else:
                                     self.info_labels["阿尔法"].setText("0.0000")
                             else:
@@ -1234,6 +1288,11 @@ class BacktestResultWindow(QMainWindow):
     def update_chart(self, daily_stats_df, benchmark_df):
         """更新收益曲线图表、回撤分析图、盈亏分析图和成交记录图"""
         try:
+            # 定义字体大小（与create_chart中保持一致）
+            title_fontsize = int(13 * self.font_scale)
+            label_fontsize = int(11 * self.font_scale)
+            tick_fontsize = int(10 * self.font_scale)
+            
             # 清除之前的图表内容
             self.ax.clear()
             self.ax_drawdown.clear()
@@ -1246,17 +1305,20 @@ class BacktestResultWindow(QMainWindow):
             self.ax_pnl.set_facecolor('#2d2d2d')  # 盈亏分析图背景色
             self.ax_trades.set_facecolor('#2d2d2d')  # 成交记录图背景色
             
-            self.ax.set_title("策略收益与基准对比", color='#e8e8e8', pad=25, fontsize=12, fontweight='bold')
-            self.ax.set_ylabel("净值", color='#a0a0a0', fontsize=10)
-            self.ax_drawdown.set_ylabel("回撤率 (%)", color='#a0a0a0', fontsize=10)
-            self.ax_pnl.set_ylabel("日盈亏", color='#a0a0a0', fontsize=10)
-            self.ax_trades.set_ylabel("买入/卖出量", color='#a0a0a0', fontsize=10)
-            self.ax_trades.set_xlabel("时间", color='#a0a0a0', fontsize=10)
+            # 重新设置标题和轴标签字体
+            self.ax.set_title("策略收益与基准对比", color='#e8e8e8', pad=int(20 * self.font_scale), 
+                             fontsize=title_fontsize, fontweight='bold')
+            self.ax.set_ylabel("净值", color='#a0a0a0', fontsize=label_fontsize)
+            self.ax_drawdown.set_ylabel("回撤率 (%)", color='#a0a0a0', fontsize=label_fontsize)
+            self.ax_pnl.set_ylabel("日盈亏", color='#a0a0a0', fontsize=label_fontsize)
+            self.ax_trades.set_ylabel("买入/卖出量", color='#a0a0a0', fontsize=label_fontsize)
+            #self.ax_trades.set_xlabel("时间", color='#a0a0a0', fontsize=label_fontsize)
             
-            for a in [self.ax, self.ax_drawdown, self.ax_pnl, self.ax_trades]:
-                a.tick_params(axis='both', colors='#a0a0a0', labelsize=10)
-                a.grid(True, linestyle='--', alpha=0.1, color='#808080')
-                for spine in a.spines.values():
+            # 设置刻度字体大小
+            for ax in [self.ax, self.ax_drawdown, self.ax_pnl, self.ax_trades]:
+                ax.tick_params(axis='both', colors='#a0a0a0', labelsize=tick_fontsize)
+                ax.grid(True, linestyle='--', alpha=0.1, color='#808080')
+                for spine in ax.spines.values():
                     spine.set_color('#404040')
             
             # 反转回撤图的y轴
@@ -1413,7 +1475,8 @@ class BacktestResultWindow(QMainWindow):
                     print(f"处理基准数据时出错: {str(e)}")
             
             # 添加图例
-            self.ax.legend(loc='upper left', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=10)
+            main_legend_fontsize = int(10 * self.font_scale)  # 适中的主图图例字体
+            self.ax.legend(loc='upper left', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=main_legend_fontsize)
             # 
             self.ax.text(0.5, 0.5, 'khQuant', 
                         horizontalalignment='center', verticalalignment='center',
@@ -1466,18 +1529,20 @@ class BacktestResultWindow(QMainWindow):
             # 根据回撤值的大小调整垂直偏移
             text_offset_y = -35 if max_dd > 15 else -25
             
+            annotation_fontsize = int(10 * self.font_scale)  # 适中的标注字体
             self.ax_drawdown.annotate(f"最大回撤: {max_dd:.2f}%", 
                                     xy=(max_dd_date, max_dd), 
                                     xytext=(text_offset_x, text_offset_y),
                                     textcoords="offset points",
                                     bbox=dict(boxstyle='round,pad=0.5', fc='#333333', ec='#404040', alpha=0.9),
                                     color='#e8e8e8',
-                                    fontsize=10,
+                                    fontsize=annotation_fontsize,
                                     ha=ha,
                                     arrowprops=dict(arrowstyle='->', color='#a0a0a0', connectionstyle='arc3,rad=0.2'))
             
             # 添加回撤图例
-            self.ax_drawdown.legend(loc='upper right', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=10)
+            legend_fontsize = int(10 * self.font_scale)  # 适中的图例字体
+            self.ax_drawdown.legend(loc='upper right', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=legend_fontsize)
             
             # =================== 绘制盈亏分析图 ===================
             # 计算每日盈亏金额
@@ -1504,7 +1569,8 @@ class BacktestResultWindow(QMainWindow):
                               width=0.8)  # 调整宽度使柱状图更加美观
             
             # 添加盈亏分析图图例
-            self.ax_pnl.legend(loc='upper right', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=10)
+            pnl_legend_fontsize = int(10 * self.font_scale)  # 适中的盈亏分析图图例字体
+            self.ax_pnl.legend(loc='upper right', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=pnl_legend_fontsize)
             
             # =================== 绘制成交记录图 ===================
             # 获取交易记录文件
@@ -1584,7 +1650,8 @@ class BacktestResultWindow(QMainWindow):
                                          width=0.8)  # 调整宽度使柱状图更加美观
                     
                     # 添加成交记录图图例
-                    self.ax_trades.legend(loc='upper right', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=10)
+                    trades_legend_fontsize = int(10 * self.font_scale)  # 适中的成交记录图图例字体
+                    self.ax_trades.legend(loc='upper right', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=trades_legend_fontsize)
                     
                 except Exception as e:
                     print(f"处理交易记录时出错: {str(e)}")
@@ -1598,12 +1665,12 @@ class BacktestResultWindow(QMainWindow):
             for ax in [self.ax_drawdown, self.ax_pnl, self.ax_trades]:
                 ax.xaxis.set_major_locator(locator)
                 ax.xaxis.set_major_formatter(formatter)
-                # 旋转日期标签
-                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+                # 旋转日期标签并设置字体大小
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right', fontsize=tick_fontsize)
             
             # 调整布局以确保标题和坐标轴完整显示
             # 使用 subplots_adjust 而不是 tight_layout 以确保与初始设置一致
-            self.ax.figure.subplots_adjust(left=0.18, right=0.95, top=0.90, bottom=0.18, hspace=0.25)
+            self.ax.figure.subplots_adjust(left=0.10, right=0.96, top=0.92, bottom=0.12, hspace=0.18)
             
             # 重绘图表
             self.chart_view.draw()
@@ -1808,9 +1875,12 @@ class BacktestResultWindow(QMainWindow):
             
             hover_text += f"\n回撤: {drawdown_value:.2f}%"
             
-            # 只有当有盈亏时才显示盈亏信息
+            # 只有当有盈亏时才显示盈亏信息，并根据正负值设置颜色提示
             if pnl_value != 0:
-                hover_text += f"\n盈亏: {pnl_value:.2f}"
+                if pnl_value > 0:
+                    hover_text += f"\n盈亏: +{pnl_value:.2f} ↗"  # 正数用上箭头表示
+                else:
+                    hover_text += f"\n盈亏: {pnl_value:.2f} ↘"   # 负数用下箭头表示
             
             # 只有当有成交记录时才显示成交信息
             if buy_volume > 0 or sell_volume > 0:
@@ -1832,14 +1902,15 @@ class BacktestResultWindow(QMainWindow):
                     self.hover_annotation = None
             
             # 创建新的悬浮窗（放在策略收益图上）
+            hover_fontsize = int(10 * self.font_scale)  # 适中的悬浮框字体
             self.hover_annotation = self.ax.annotate(
                 hover_text,
                 xy=(x_date, strategy_value),
                 xytext=(x_offset, 30),
                 textcoords="offset points",
                 bbox=dict(boxstyle='round,pad=0.5', fc='#333333', ec='#404040', alpha=0.9),
+                fontsize=hover_fontsize,
                 color='#e8e8e8',
-                fontsize=9,
                 ha='left' if x_rel_pos <= 0.7 else 'right',
                 va='top'
             )
