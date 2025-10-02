@@ -48,26 +48,6 @@ class KhConfig:
         self.position_limit = risk_config.get("position_limit", 0.95)
         self.order_limit = risk_config.get("order_limit", 100)
         self.loss_limit = risk_config.get("loss_limit", 0.1)
-
-        # 数据提供者配置 (V2.2.0新增)
-        data_provider_config = self.config_dict.get("system", {}).get("data_provider", {})
-
-        # 数据提供者类型：'xtquant' 或 'mootdx'
-        # 实盘/模拟模式强制使用 xtquant
-        if self.run_mode in ['simulate', 'live']:
-            self.data_provider_type = 'xtquant'
-        else:
-            # 回测模式可以自由选择，默认使用 mootdx
-            self.data_provider_type = data_provider_config.get("type", "mootdx")
-
-        # 获取对应提供者的配置
-        provider_specific_config = data_provider_config.get(self.data_provider_type, {})
-
-        # Mootdx 配置
-        self.mootdx_mode = provider_specific_config.get("mode", "online")  # online 或 offline
-        self.mootdx_tdxdir = provider_specific_config.get("tdxdir", "")  # 通达信目录
-        self.mootdx_use_cache = provider_specific_config.get("use_cache", True)
-        self.use_xtquant_for_adjust = provider_specific_config.get("use_xtquant_for_adjust", True)  # 复权数据是否用 xtquant
         
     @property
     def initial_cash(self):

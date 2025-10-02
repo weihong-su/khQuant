@@ -236,6 +236,14 @@ machine_code.txt
 *.bak
 *.backup
 backup/
+requirements_backup.txt
+
+# 规范工作流临时目录
+.spec-workflow/
+
+# 临时调试文件
+nul
+debug.txt
 
 # 压缩文件
 *.zip
@@ -249,9 +257,9 @@ backup/
 *.h5
 *.hdf5
 
-# 本地测试文件
-test_*.py
-*_test.py
+# 本地测试文件（保留项目自带测试文件）
+# test_*.py  # 注释掉，保留项目测试文件
+# *_test.py  # 注释掉，保留项目测试文件
 playground/
 sandbox/
 

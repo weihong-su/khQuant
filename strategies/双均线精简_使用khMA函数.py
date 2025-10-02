@@ -17,9 +17,13 @@ def khHandlebar(data: Dict) -> List[Dict]:  # 主策略函数
   
     ma_short = khMA(stock_code, 5, end_time=current_date_str)  # 计算5日均线
     ma_long = khMA(stock_code, 20, end_time=current_date_str)  # 计算20日均线
-      
+
+    # 如果均线计算失败（数据不足），跳过本次交易
+    if ma_short is None or ma_long is None:
+        return signals
+
     has_position = khHas(data, stock_code)  # 检查是否持有该股票
-  
+
     if ma_short > ma_long and not has_position:  # 金叉且无持仓
         signals = generate_signal(data, stock_code, current_price, 1.0, 'buy', f"5日线({ma_short:.2f}) 上穿 20日线({ma_long:.2f})，全仓买入")  # 生成买入信号
 

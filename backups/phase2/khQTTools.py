@@ -21,7 +21,7 @@ import csv
 import time
 from datetime import datetime, timedelta
 import pandas as pd
-from xtquant import xtdata  # 保留用于实盘交易
+from xtquant import xtdata
 # from xtquant.xtdata import get_client
 import glob
 import numpy as np
@@ -32,55 +32,6 @@ from typing import Dict, List, Union, Optional
 import math
 from khTrade import KhTradeManager
 from types import SimpleNamespace
-
-# ===== V2.2.0新增: 数据接口抽象层支持 =====
-from khDataProvider import DataProviderFactory
-
-# 全局数据提供者实例（延迟初始化）
-_global_data_provider = None
-
-# khHistory 数据缓存（用于减少重复网络请求）
-# 缓存键格式: (stock_code, period, start_time, end_time, dividend_type)
-_khHistory_cache = {}
-
-def clear_khHistory_cache():
-    """清空 khHistory 缓存（用于回测结束或策略重启时）"""
-    global _khHistory_cache
-    _khHistory_cache = {}
-    logger = logging.getLogger(__name__)
-    logger.info("khHistory 缓存已清空")
-
-def get_data_provider():
-    """获取全局数据提供者实例（延迟初始化）
-
-    Returns:
-        DataProviderInterface: 数据提供者实例
-    """
-    global _global_data_provider
-
-    if _global_data_provider is None:
-        # 尝试从全局配置获取数据提供者类型
-        try:
-            from khConfig import KhConfig
-            # 这里假设有全局配置实例,如果没有则使用默认值
-            # 实际使用时由框架层传入配置
-            provider_type = 'xtquant'  # 默认值
-        except:
-            provider_type = 'xtquant'
-
-        _global_data_provider = DataProviderFactory.get_provider(provider_type)
-
-    return _global_data_provider
-
-def set_data_provider(provider_type='xtquant', **kwargs):
-    """设置全局数据提供者
-
-    Args:
-        provider_type: 数据提供者类型 ('xtquant' 或 'mootdx')
-        **kwargs: 提供者特定的配置参数
-    """
-    global _global_data_provider
-    _global_data_provider = DataProviderFactory.get_provider(provider_type, **kwargs)
 
 # 延迟导入Qt相关模块，避免在子进程中意外启动Qt应用
 try:
@@ -368,14 +319,8 @@ def khMA(stock_code: str, period: int, field: str = 'close', fre_step: str = '1d
         force_download=False  # 不强制下载数据，提高回测速度
     )
 
-    # 调试信息（仅在数据不足时输出警告）
-    import logging
-    logger = logging.getLogger(__name__)
-
     if stock_code not in data or len(data[stock_code]) < period:
-        # 数据不足时返回 None，而不是抛出异常（回测初期数据不足是正常情况）
-        logger.warning(f"股票 {stock_code} 数据量不足 {period} 条，无法计算均线{period}，返回 None")
-        return None
+        raise ValueError(f"股票 {stock_code} 数据量不足 {period} 条，无法计算均线{period}")
 
     prices = data[stock_code][field]
     return round(prices.mean(), 2)
@@ -809,39 +754,54 @@ def download_and_store_data(local_data_path, stock_files, field_list, period_typ
                     if check_interrupt and check_interrupt():
                         logging.info("下载过程被中断")
                         raise InterruptedError("下载过程被用户中断")
-
-                    # 获取数据提供者
-                    provider = get_data_provider()
-
-                    # 使用数据提供者获取数据(统一处理指数和股票)
-                    logging.info(f"获取{'指数' if is_index else '股票'}数据: {stock}")
-                    provider.download_history_data(
-                        stock_code=stock,
-                        period=period_type,
-                        start_time=start_date,
-                        end_time=end_date
-                    )
-
-                    # 再次检查中断
-                    if check_interrupt and check_interrupt():
-                        logging.info("下载过程被中断")
-                        raise InterruptedError("下载过程被用户中断")
-
-                    data = provider.get_market_data(
-                        field_list=['time'] + field_list,
-                        stock_list=[stock],
-                        period=period_type,
-                        start_time=start_date,
-                        end_time=end_time,
-                        count=-1,
-                        dividend_type=dividend_type,  # 添加复权参数
-                        fill_data=True
-                    )
-                    if data and stock in data:
-                        df = data[stock]
-                        logging.info(f"成功获取{'指数' if is_index else '股票'}数据: {stock}")
+                        
+                    if is_index:
+                        # 指数数据处理
+                        logging.info(f"获取指数数据: {stock}")
+                        xtdata.download_history_data(stock, period=period_type, 
+                                                   start_time=start_date, end_time=end_date)
+                        
+                        # 再次检查中断
+                        if check_interrupt and check_interrupt():
+                            logging.info("下载过程被中断")
+                            raise InterruptedError("下载过程被用户中断")
+                            
+                        data = xtdata.get_market_data_ex(
+                            field_list=['time'] + field_list,
+                            stock_list=[stock],
+                            period=period_type,
+                            start_time=start_date,
+                            end_time=end_date,
+                            count=-1,
+                            dividend_type=dividend_type,  # 添加复权参数
+                            fill_data=True
+                        )
+                        if data and stock in data:
+                            df = data[stock]
+                            logging.info(f"成功获取指数数据: {stock}")
+                        else:
+                            raise Exception(f"未能获取指数数据: {stock}")
                     else:
-                        raise Exception(f"未能获取数据: {stock}")
+                        # 普通股票数据处理
+                        logging.info(f"获取股票数据: {stock}")
+                        xtdata.download_history_data(stock, period=period_type, 
+                                                   start_time=start_date, end_time=end_date)
+                        
+                        # 再次检查中断
+                        if check_interrupt and check_interrupt():
+                            logging.info("下载过程被中断")
+                            raise InterruptedError("下载过程被用户中断")
+                            
+                        data = xtdata.get_local_data(  
+                            field_list=['time'] + field_list,
+                            stock_list=[stock],
+                            period=period_type,
+                            start_time=start_date,
+                            end_time=end_date,
+                            dividend_type=dividend_type,  # 添加复权参数
+                            fill_data=True
+                        )
+                        df = data[stock]
 
                     # 检查中断
                     if check_interrupt and check_interrupt():
@@ -1163,19 +1123,22 @@ def calculate_next_day_return(file_path, sample_file_name, feature_types, output
 def get_available_sectors():
     """获取所有可用的板块代码"""
     try:
-        # 使用数据提供者获取板块列表
-        provider = get_data_provider()
-
+        # 获取 miniQMT 客户端连接
+        # c = get_client()
+        # # 确保客户端已连接
+        # if not c.connect():
+        #     raise Exception("无法连接到 miniQMT 客户端")
+        
         # 获取所有板块
-        sectors = provider.get_sector_list()
-
+        sectors = xtdata.get_sector_list()
+        
         logging.info("可用的板块列表：")
         for sector in sectors:
             # 尝试获取该板块的成分股
-            components = provider.get_stock_list_in_sector(sector)
+            components = xtdata.get_stock_list_in_sector(sector)
             count = len(components) if components else 0
             logging.info(f"板块: {sector}, 成分股数量: {count}")
-
+        
         return sectors
     except Exception as e:
         logging.error(f"获取板块列表时出错: {str(e)}")
@@ -1189,11 +1152,8 @@ def get_stock_list():
         # # 确保客户端已连接
         # if not c.connect():
         #     raise Exception("无法连接到 miniQMT 客户端")
-
-
-        # 使用数据提供者下载板块数据
-        provider = get_data_provider()
-        provider.download_sector_data()
+        
+        xtdata.download_sector_data()
 
         logging.info("开始获取股票列表...")
         
@@ -1244,12 +1204,12 @@ def get_stock_list():
             try:
                 logging.info(f"获取{sector_name}股票列表...")
                 print(f"[更新进度] 正在获取{sector_name}股票列表...")
-                stocks = provider.get_stock_list_in_sector(sector_name)
+                stocks = xtdata.get_stock_list_in_sector(sector_name)
                 if stocks:
                     logging.info(f"获取到 {len(stocks)} 只{sector_name}股票")
                     for code in stocks:
                         try:
-                            detail = provider.get_instrument_detail(code)
+                            detail = xtdata.get_instrument_detail(code)
                             if detail:
                                 if isinstance(detail, str):
                                     detail = ast.literal_eval(detail)
@@ -1276,12 +1236,12 @@ def get_stock_list():
         for index_name, dict_key in index_components_mapping.items():
             try:
                 logging.info(f"获取{index_name}成分股...")
-                components = provider.get_stock_list_in_sector(index_name)
+                components = xtdata.get_stock_list_in_sector(index_name)
                 if components:
                     logging.info(f"获取到 {len(components)} 只{index_name}成分股")
                     for code in components:
                         try:
-                            detail = provider.get_instrument_detail(code)
+                            detail = xtdata.get_instrument_detail(code)
                             if detail:
                                 if isinstance(detail, str):
                                     detail = ast.literal_eval(detail)
@@ -1311,12 +1271,12 @@ def get_stock_list():
         for cb_name, dict_key in convertible_bonds_mapping.items():
             try:
                 logging.info(f"获取{cb_name}成分股...")
-                cb_stocks = provider.get_stock_list_in_sector(cb_name)
+                cb_stocks = xtdata.get_stock_list_in_sector(cb_name)
                 if cb_stocks:
                     logging.info(f"获取到 {len(cb_stocks)} 只{cb_name}")
                     for code in cb_stocks:
                         try:
-                            detail = provider.get_instrument_detail(code)
+                            detail = xtdata.get_instrument_detail(code)
                             if detail:
                                 if isinstance(detail, str):
                                     detail = ast.literal_eval(detail)
@@ -1418,8 +1378,7 @@ def stock_list_worker(output_dir, queue):
         
         # 发送进度消息
         queue.put(("progress", "正在下载板块数据..."))
-        provider = get_data_provider()
-        provider.download_sector_data()
+        xtdata.download_sector_data()
         queue.put(("progress", "板块数据下载完成"))
         
         # 发送进度消息
@@ -1491,15 +1450,14 @@ def get_stock_list_for_subprocess(queue):
     for sector_name, dict_key in sector_mapping.items():
         queue.put(("progress", f"正在获取{sector_name}股票列表..."))
         print(f"[更新进度] 正在获取{sector_name}股票列表...", flush=True)
-        provider = get_data_provider()
         try:
-            stocks = provider.get_stock_list_in_sector(sector_name)
+            stocks = xtdata.get_stock_list_in_sector(sector_name)
             if stocks:
                 print(f"[更新进度] 获取到 {len(stocks)} 只{sector_name}股票，正在处理详细信息...", flush=True)
                 processed_count = 0
                 for code in stocks:
                     try:
-                        detail = provider.get_instrument_detail(code)
+                        detail = xtdata.get_instrument_detail(code)
                         if detail:
                             if isinstance(detail, str):
                                 detail = ast.literal_eval(detail)
@@ -1529,12 +1487,12 @@ def get_stock_list_for_subprocess(queue):
         queue.put(("progress", f"正在获取{index_name}成分股..."))
         print(f"[更新进度] 正在获取{index_name}成分股...", flush=True)
         try:
-            components = provider.get_stock_list_in_sector(index_name)
+            components = xtdata.get_stock_list_in_sector(index_name)
             if components:
                 print(f"[更新进度] 获取到 {len(components)} 只{index_name}成分股，正在处理详细信息...", flush=True)
                 for code in components:
                     try:
-                        detail = provider.get_instrument_detail(code)
+                        detail = xtdata.get_instrument_detail(code)
                         if detail:
                             if isinstance(detail, str):
                                 detail = ast.literal_eval(detail)
@@ -1555,12 +1513,12 @@ def get_stock_list_for_subprocess(queue):
     queue.put(("progress", "正在获取沪深转债..."))
     print(f"[更新进度] 正在获取沪深转债...", flush=True)
     try:
-        cb_stocks = provider.get_stock_list_in_sector('沪深转债')
+        cb_stocks = xtdata.get_stock_list_in_sector('沪深转债')
         if cb_stocks:
             print(f"[更新进度] 获取到 {len(cb_stocks)} 只沪深转债，正在筛选转债...", flush=True)
             for code in cb_stocks:
                 try:
-                    detail = provider.get_instrument_detail(code)
+                    detail = xtdata.get_instrument_detail(code)
                     if detail:
                         if isinstance(detail, str):
                             detail = ast.literal_eval(detail)
@@ -1781,8 +1739,7 @@ else:
             progress_msg = "正在下载板块数据..."
             self.progress.emit(progress_msg)
             print(f"[更新进度] {progress_msg}", flush=True)
-            provider = get_data_provider()
-            provider.download_sector_data()
+            xtdata.download_sector_data()
             print("[更新进度] 板块数据下载完成", flush=True)
 
             progress_msg = "正在获取股票列表..."
@@ -1861,7 +1818,7 @@ else:
             self.progress.emit(progress_msg)
             print(f"[更新进度] {progress_msg}", flush=True)
             try:
-                stocks = provider.get_stock_list_in_sector(sector_name)
+                stocks = xtdata.get_stock_list_in_sector(sector_name)
                 if stocks:
                     print(f"[更新进度] 获取到 {len(stocks)} 只{sector_name}股票，正在处理详细信息...", flush=True)
                     processed_count = 0
@@ -1869,7 +1826,7 @@ else:
                         if not self.running:
                             return stock_dict
                         try:
-                            detail = provider.get_instrument_detail(code)
+                            detail = xtdata.get_instrument_detail(code)
                             if detail:
                                 if isinstance(detail, str):
                                     detail = ast.literal_eval(detail)
@@ -1904,14 +1861,14 @@ else:
             self.progress.emit(progress_msg)
             print(f"[更新进度] {progress_msg}", flush=True)
             try:
-                components = provider.get_stock_list_in_sector(index_name)
+                components = xtdata.get_stock_list_in_sector(index_name)
                 if components:
                     print(f"[更新进度] 获取到 {len(components)} 只{index_name}成分股，正在处理详细信息...", flush=True)
                     for code in components:
                         if not self.running:
                             return stock_dict
                         try:
-                            detail = provider.get_instrument_detail(code)
+                            detail = xtdata.get_instrument_detail(code)
                             if detail:
                                 if isinstance(detail, str):
                                     detail = ast.literal_eval(detail)
@@ -1943,14 +1900,14 @@ else:
             self.progress.emit(progress_msg)
             print(f"[更新进度] {progress_msg}", flush=True)
             try:
-                cb_stocks = provider.get_stock_list_in_sector(cb_name)
+                cb_stocks = xtdata.get_stock_list_in_sector(cb_name)
                 if cb_stocks:
                     print(f"[更新进度] 获取到 {len(cb_stocks)} 只{cb_name}，正在筛选转债...", flush=True)
                     for code in cb_stocks:
                         if not self.running:
                             return stock_dict
                         try:
-                            detail = provider.get_instrument_detail(code)
+                            detail = xtdata.get_instrument_detail(code)
                             if detail:
                                 if isinstance(detail, str):
                                     detail = ast.literal_eval(detail)
@@ -2077,24 +2034,24 @@ def supplement_history_data(stock_files, field_list, period_type, start_date, en
                 if check_interrupt and check_interrupt():
                     logging.info("补充数据过程被中断")
                     raise InterruptedError("补充数据过程被用户中断")
-
-                # 使用数据提供者进行数据补充
-                provider = get_data_provider()
-                provider.download_history_data(
-                    stock_code=stock,
+                    
+                # 调用download_history_data进行数据补充
+                xtdata.download_history_data(
+                    stock,
                     period=period_type,
                     start_time=start_date,
-                    end_time=end_date
+                    end_time=end_date,
+                    incrementally=True
                 )
 
                 # 检查是否需要中断
                 if check_interrupt and check_interrupt():
                     logging.info("补充数据过程被中断")
                     raise InterruptedError("补充数据过程被用户中断")
-
-
+                    
+                    
                 # 获取数据（带复权参数）
-                data = provider.get_market_data(
+                data = xtdata.get_market_data_ex(
                     field_list=field_list,
                     stock_list=[stock],
                     period=period_type,
@@ -2221,14 +2178,12 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
     
     # 导入必要的模块
     try:
+        from xtquant import xtdata
         import pandas as pd
         from datetime import datetime, timedelta
     except ImportError as e:
         print(f"导入模块失败: {str(e)}")
         return {}
-
-    # 获取数据提供者实例
-    provider = get_data_provider()
     
     # 参数验证
     if not symbol_list:
@@ -2333,11 +2288,11 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
                 start_dt = current_datetime - timedelta(days=bar_count * 5)
                 start_date = start_dt.strftime('%Y%m%d')
             
-            # 使用数据提供者下载数据到指定时间
+            # 使用xtdata.download_history_data下载数据到指定时间
             download_count = 0
             for stock_code in stock_codes:
                 try:
-                    provider.download_history_data(
+                    xtdata.download_history_data(
                         stock_code=stock_code,
                         period=period,
                         start_time=start_date,
@@ -2346,12 +2301,12 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
                     download_count += 1
                 except Exception as e:
                     print(f"下载 {stock_code} 数据失败: {str(e)}")
-
+            
             print(f"成功下载 {download_count}/{len(stock_codes)} 只股票的数据")
         
-        # 使用数据提供者获取数据
+        # 使用xtdata.get_market_data_ex获取数据
         #print(f"从本地获取数据，基于时间: {current_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
-
+        
         # 计算实际的数据获取范围
         # 根据频率确定往前推算的天数，增加缓冲以确保有足够的历史数据
         if period == 'tick':
@@ -2365,58 +2320,24 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
             lookback_days = bar_count * 5  # 增加缓冲
         else:
             lookback_days = bar_count * 3
-
+        
         start_dt = current_datetime - timedelta(days=lookback_days)
         start_time = start_dt.strftime('%Y%m%d')
         end_time = current_date_str
-
+        
         #print(f"实际查询范围: {start_time} 到 {end_time}")
-
-        # 检查缓存（优化：复用更大范围的缓存数据）
-        global _khHistory_cache
-        logger = logging.getLogger(__name__)
-
-        # 尝试查找可复用的缓存（同股票、同周期、同复权、end_time相同、start_time早于或等于请求）
-        data = None
-        cache_hit_key = None
-
-        for cached_key in _khHistory_cache.keys():
-            cached_stocks, cached_period, cached_start, cached_end, cached_div = cached_key
-
-            # 检查是否可复用：股票列表相同、周期相同、复权方式相同、结束时间相同、开始时间早于等于请求
-            if (cached_stocks == tuple(sorted(stock_codes)) and
-                cached_period == period and
-                cached_div == dividend_type and
-                cached_end == end_time and
-                cached_start <= start_time):  # 缓存的开始时间更早，包含更多数据
-
-                # 找到可复用的缓存
-                data = _khHistory_cache[cached_key]
-                cache_hit_key = cached_key
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"缓存命中: 复用 {cached_start}~{cached_end} 的数据用于 {start_time}~{end_time}")
-                break
-
-        if data is None:
-            # 未找到可复用缓存，获取新数据
-            # 获取数据
-            data = provider.get_market_data(
-                field_list=['time'] + fields,
-                stock_list=stock_codes,
-                period=period,
-                start_time=start_time,
-                end_time=end_time,
-                count=-1,
-                dividend_type=dividend_type,
-                fill_data=True
-            )
-
-            # 存入缓存（仅当成功获取数据时）
-            if data:
-                cache_key = (tuple(sorted(stock_codes)), period, start_time, end_time, dividend_type)
-                _khHistory_cache[cache_key] = data
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"缓存数据: {len(stock_codes)}只股票, {period}, {start_time}~{end_time}")
+        
+        # 获取数据
+        data = xtdata.get_market_data_ex(
+            field_list=['time'] + fields,
+            stock_list=stock_codes,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+            count=-1,
+            dividend_type=dividend_type,
+            fill_data=True
+        )
         
         if not data:
             print("未获取到任何数据")
@@ -2438,60 +2359,28 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
             
             # 复制数据避免修改原始数据
             stock_data = stock_data.copy()
-
-            # 处理时间：支持时间在列中（xtquant）或在索引中（mootdx）
-            time_in_index = isinstance(stock_data.index, pd.DatetimeIndex) or stock_data.index.name in ['time', 'timestamp', 'date', 'datetime']
-
-            import logging
-            logger = logging.getLogger(__name__)
-            # 仅在调试模式下输出详细信息
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"股票={stock_code}, 原始数据={len(stock_data)}条, time_in_index={time_in_index}")
-                if len(stock_data) > 0:
-                    logger.debug(f"数据时间范围: {stock_data.index.min()} 到 {stock_data.index.max()}")
-
-            if time_in_index:
-                # 时间在索引中（mootdx格式）
-                # 将索引转换为time列
-                stock_data['time'] = stock_data.index
-                stock_data = stock_data.reset_index(drop=True)
-
-                # 筛选到指定时间之前的数据（不包含当前时间点）
-                if period == 'tick':
-                    mask = stock_data['time'] < current_datetime
-                elif period in ['1m', '5m']:
-                    mask = stock_data['time'] < current_datetime
-                else:
-                    # 日线数据只比较日期部分，不包含当前日期（<）
-                    mask = stock_data['time'].dt.date < current_datetime.date()
-
-                stock_data = stock_data[mask]
-
-                # 按时间排序
-                stock_data = stock_data.sort_values('time').reset_index(drop=True)
-
-            elif 'time' in stock_data.columns:
-                # 时间在列中（xtquant格式）
+            
+            # 处理时间列
+            if 'time' in stock_data.columns:
                 # 转换时间列
                 stock_data['time'] = pd.to_datetime(stock_data['time'].astype(float), unit='ms') + pd.Timedelta(hours=8)
-
+                
                 # 筛选到指定时间之前的数据（不包含当前时间点）
                 if period == 'tick':
+                    # tick数据按精确时间筛选，不包含当前时间点
                     mask = stock_data['time'] < current_datetime
                 elif period in ['1m', '5m']:
+                    # 分钟数据按精确时间筛选，不包含当前时间点
                     mask = stock_data['time'] < current_datetime
                 else:
-                    # 日线数据只比较日期部分，不包含当前日期（<）
+                    # 日线数据只比较日期部分，不包含当前日期
                     mask = stock_data['time'].dt.date < current_datetime.date()
-
+                
                 stock_data = stock_data[mask]
-
+                
                 # 按时间排序
                 stock_data = stock_data.sort_values('time').reset_index(drop=True)
-            else:
-                # 既没有time列也不是DatetimeIndex，打印警告
-                print(f"警告: 股票 {stock_code} 数据中未找到时间信息（列或索引）")
-
+            
             # 跳过停牌数据处理
             if skip_paused and 'volume' in stock_data.columns:
                 # 过滤掉成交量为0的数据（停牌日）
@@ -2504,15 +2393,11 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
             # 取最近的bar_count条记录
             if not stock_data.empty and len(stock_data) > bar_count:
                 stock_data = stock_data.tail(bar_count).reset_index(drop=True)
-
-            # 仅在数据不足时输出警告
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"股票={stock_code}, 筛选后数据={len(stock_data)}条, 请求={bar_count}条")
-
+            
             # 重新整理列顺序，确保time列在前
             columns_order = ['time'] + [col for col in fields if col in stock_data.columns]
             stock_data = stock_data[columns_order]
-
+            
             result[stock_code] = stock_data
             #print(f"股票 {stock_code}: 获取 {len(stock_data)} 条记录")
             

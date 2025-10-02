@@ -1,6 +1,15 @@
 {
     "system": {
-        "userdata_path": "I:/Program Files/qmt/国金QMT交易端模拟/userdata_mini"
+        "userdata_path": "C:/QMT/userdata_mini",
+        "data_provider": {
+            "type": "mootdx",
+            "mootdx": {
+                "mode": "online",
+                "tdxdir": "",
+                "use_cache": true,
+                "use_xtquant_for_adjust": false
+            }
+        }
     },
     "run_mode": "backtest",
     "account": {

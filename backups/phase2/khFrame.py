@@ -10,16 +10,15 @@ import shutil
 from types import SimpleNamespace
 import threading
 
-from xtquant import xtdata  # 保留用于实盘交易
+from xtquant import xtdata
 from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
 from xtquant.xttype import StockAccount
 from xtquant import xtconstant
 
 from khTrade import KhTradeManager
 from khRisk import KhRiskManager
-from khQTTools import KhQuTools, set_data_provider, get_data_provider
+from khQTTools import KhQuTools
 from khConfig import KhConfig
-from khDataProvider import DataProviderFactory
 
 import numpy as np
 from PyQt5.QtCore import Qt, QMetaObject, Q_ARG
@@ -524,10 +523,6 @@ class KhQuantFramework:
         # 初始化交易管理器
         self.trade_mgr = KhTradeManager(self.config, self)
         
-        # 清除 khHistory 缓存，确保每次运行都是干净的状态
-        from khQTTools import clear_khHistory_cache
-        clear_khHistory_cache()
-
         # 清除可能存在的历史数据缓存，确保每次运行都是干净的状态
         if hasattr(self, 'historical_data_ref'):
             delattr(self, 'historical_data_ref')
@@ -538,35 +533,7 @@ class KhQuantFramework:
         
         # 初始化风控管理器
         self.risk_mgr = KhRiskManager(self.config)
-
-        # ===== V2.2.0新增: 初始化数据提供者 =====
-        self._init_data_provider()
-
-    def _init_data_provider(self):
-        """初始化数据提供者（根据配置）"""
-        try:
-            provider_type = self.config.data_provider_type
-
-            if provider_type == 'mootdx':
-                # 初始化mootdx提供者
-                set_data_provider(
-                    provider_type='mootdx',
-                    mode=self.config.mootdx_mode,
-                    tdxdir=self.config.mootdx_tdxdir,
-                    use_cache=self.config.mootdx_use_cache
-                )
-                print(f"数据提供者已设置为: mootdx (模式: {self.config.mootdx_mode})")
-            else:
-                # 默认使用xtquant
-                set_data_provider(provider_type='xtquant')
-                print(f"数据提供者已设置为: xtquant")
-
-        except Exception as e:
-            print(f"初始化数据提供者失败: {e}")
-            # 回退到xtquant
-            set_data_provider(provider_type='xtquant')
-            print("已回退到默认数据提供者: xtquant")
-
+        
     def load_strategy(self, strategy_file: str):
         """动态加载策略模块
         
@@ -659,24 +626,15 @@ class KhQuantFramework:
             
         if self.trader_callback:
             self.trader_callback.gui.log_message(f"开始下载{len(stock_codes)}只股票的历史数据...", "INFO")
-
-        # 使用数据提供者下载数据
-        provider = get_data_provider()
-        try:
-            for stock_code in stock_codes:
-                provider.download_history_data(
-                    stock_code=stock_code,
-                    period=self.config.kline_period,
-                    start_time=self.config.backtest_start,
-                    end_time=self.config.backtest_end
-                )
-            download_complete = True
-            if self.trader_callback:
-                self.trader_callback.gui.log_message(f"历史数据下载完成", "INFO")
-        except Exception as e:
-            if self.trader_callback:
-                self.trader_callback.gui.log_message(f"数据下载失败: {e}", "ERROR")
-            download_complete = True
+        
+        xtdata.download_history_data2(
+            stock_codes,
+            period=self.config.kline_period,
+            start_time=self.config.backtest_start,
+            end_time=self.config.backtest_end,  # 添加结束时间参数
+            incrementally=True,
+            callback=download_progress
+        )
         
         # 等待下载完成
         while not download_complete:
@@ -1172,21 +1130,20 @@ class KhQuantFramework:
                     self.trader_callback.gui.log_message(f"开始获取基准指数 {benchmark_code} 的每日数据", "INFO")
                 
                 try:
-                    # 使用数据提供者获取基准数据
-                    provider = get_data_provider()
-                    provider.download_history_data(
+                    # 先下载数据
+                    xtdata.download_history_data(
                         stock_code=benchmark_code,
                         period="1d",
                         start_time=self.config.backtest_start,
                         end_time=self.config.backtest_end,
                     )
-
-                    benchmark_data = provider.get_market_data(
+                    
+                    benchmark_data = xtdata.get_market_data_ex(
                         field_list=['time', 'close'],
                         stock_list=[benchmark_code],
                         period='1d',
                         start_time=self.config.backtest_start,
-                        end_time=self.config.backtest_end
+                        end_time=self.config.backtest_end,
                     )
                     
                     if self.trader_callback:
@@ -1302,9 +1259,7 @@ class KhQuantFramework:
                         # 默认使用tick数据
                         period = "tick"
                 
-                # 使用数据提供者获取市场数据
-                provider = get_data_provider()
-                data = provider.get_market_data(
+                data = xtdata.get_market_data_ex(
                     field_list=field_list,
                     stock_list=[code],
                     period=period,
@@ -1505,47 +1460,20 @@ class KhQuantFramework:
                 
                 # 创建基于当前时间点的数据引用
                 for code, df in historical_data.items():
-                    # 找到时间字段：优先检查索引，然后检查列
-                    time_field_found = False
-
-                    # 首先检查索引是否为时间索引
-                    if isinstance(df.index, pd.DatetimeIndex) or df.index.name in ['time', 'timestamp', 'date', 'datetime']:
-                        # 使用索引作为时间字段
-                        self.time_field_cache[code] = '__index__'  # 特殊标记表示使用索引
-                        self.historical_data_ref[code] = df
-
-                        # 预先创建时间值到索引的映射
-                        time_idx_map = {}
-                        for i, tv in enumerate(df.index):
-                            # 将 Timestamp 转换为秒级时间戳
-                            if hasattr(tv, 'timestamp'):
-                                timestamp_sec = int(tv.timestamp())
-                                time_idx_map[timestamp_sec] = i
-                            time_idx_map[tv] = i  # 也保存原始值
-                        self.time_idx_cache[code] = time_idx_map
-                        time_field_found = True
-
-                    else:
-                        # 然后检查列
-                        for field in ['time', 'timestamp', 'date', 'datetime']:
-                            if field in df.columns:
-                                self.time_field_cache[code] = field
-                                self.historical_data_ref[code] = df
-
-                                # 预先创建时间值到索引的映射
-                                time_values = df[field].values
-                                time_idx_map = {}
-                                for i, tv in enumerate(time_values):
-                                    time_idx_map[tv] = i
-                                self.time_idx_cache[code] = time_idx_map
-                                time_field_found = True
-                                break
-
-                    if not time_field_found and self.trader_callback:
-                        self.trader_callback.gui.log_message(
-                            f"警告: {code} 未找到时间字段，数据可能无法正确加载",
-                            "WARNING"
-                        )
+                    # 找到时间字段
+                    for field in ['time', 'timestamp', 'date', 'datetime']:
+                        if field in df.columns:
+                            self.time_field_cache[code] = field
+                            # 保存原始DataFrame引用
+                            self.historical_data_ref[code] = df
+                            
+                            # 预先创建时间值到索引的映射（只计算一次）
+                            time_values = df[field].values
+                            time_idx_map = {}
+                            for i, tv in enumerate(time_values):
+                                time_idx_map[tv] = i
+                            self.time_idx_cache[code] = time_idx_map
+                            break
                 
                 if self.trader_callback:
                     self.trader_callback.gui.log_message("数据缓存构建完成", "INFO")
@@ -2022,19 +1950,15 @@ class KhQuantFramework:
                     if self.trader_callback:
                         self.trader_callback.gui.log_message(f"执行最后一天的盘后回调时出错: {str(e)}", "ERROR")
                 
-            # 回测完成后清理缓存
-            from khQTTools import clear_khHistory_cache
-            clear_khHistory_cache()
-
             # 回测完成后发送信号
             if self.trader_callback:
                 # 先停止策略并更新状态
                 self.is_running = False
                 self.trader_callback.gui.on_strategy_finished()
-
+                
                 # 显示100%进度
                 self.trader_callback.gui.log_message("回测进度: 100.00%", "INFO")
-
+                
                 # 然后再显示回测结果
                 self.trader_callback.gui.log_message("回测完成", "INFO")
                 QMetaObject.invokeMethod(
@@ -2098,21 +2022,20 @@ class KhQuantFramework:
                 # 保存基准指数数据
                 benchmark_code = self.config.config_dict["backtest"]["benchmark"]
                 try:
-                    # 使用数据提供者获取基准数据
-                    provider = get_data_provider()
-                    provider.download_history_data(
+                    # 先下载数据确保可用
+                    xtdata.download_history_data(
                         stock_code=benchmark_code,
                         period="1d",
                         start_time=self.config.backtest_start,
                         end_time=self.config.backtest_end,
                     )
-
-                    benchmark_data = provider.get_market_data(
+                    
+                    benchmark_data = xtdata.get_market_data(
                         field_list=['close'],
                         stock_list=[benchmark_code],
                         period='1d',
                         start_time=self.config.backtest_start,
-                        end_time=self.config.backtest_end
+                        end_time=self.config.backtest_end,
                     )
                     
                     if self.trader_callback:
@@ -2569,15 +2492,14 @@ class KhQuantFramework:
                     self.trader_callback.gui.log_message(f"使用缓存的日线数据，日期: {yyyymmdd_date}", "INFO")
             else:
                 try:
-                    # 使用数据提供者获取日线数据
-                    provider = get_data_provider()
-                    daily_data = provider.get_market_data(
+                    # 一次性获取所有持仓股票的日线数据
+                    daily_data = xtdata.get_market_data(
                         field_list=['close'],
                         stock_list=position_codes,
                         period='1d',
                         start_time=yyyymmdd_date,
                         end_time=yyyymmdd_date,
-                        # 与回测数据保持一致的复权方式，避免"下单用复权价、估值用未复权价"的不一致
+                        # 与回测数据保持一致的复权方式，避免“下单用复权价、估值用未复权价”的不一致
                         dividend_type=self.config.config_dict["data"].get("dividend_type", "none")
                     )
                     
