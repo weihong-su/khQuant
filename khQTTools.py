@@ -1,6 +1,16 @@
 # 多进程保护 - 防止在子进程中意外启动Qt应用
+# 版本标识 - 用于验证代码是否正确加载
+__KHQTTOOLS_VERSION__ = "2.2.0-CACHE-FIX-633S-V2"
+__CACHE_BUFFER_DAYS__ = 180
+
 import sys
 import os
+
+# 模块加载时立即打印版本（确保加载了正确的代码）
+print(f"\n{'='*60}")
+print(f"[khQTTools] 加载版本: {__KHQTTOOLS_VERSION__}")
+print(f"[khQTTools] 缓存缓冲天数: {__CACHE_BUFFER_DAYS__} 天")
+print(f"{'='*60}\n")
 
 # 检查是否在子进程中，只在子进程中设置环境变量
 def is_subprocess():
@@ -2371,47 +2381,68 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
         else:
             lookback_days = bar_count * 3
 
-        start_dt = current_datetime - timedelta(days=lookback_days)
-        start_time = start_dt.strftime('%Y%m%d')
+        # === 缓存优化核心修复 ===
+        # 问题分析：之前每天的 start_time 和 end_time 都递增，导致缓存键每天不同，无法命中缓存
+        # 根本原因：start_dt = current_datetime - lookback_days 导致每天start_time不同
+        #
+        # 优化方案：使用固定的时间范围作为缓存键基准，确保整个回测期间缓存键相同
+        # 1. start_time: 使用当前时间点向前固定天数（如360天）作为缓存起点
+        # 2. end_time: 使用当前时间点向后固定天数（如180天）作为缓存终点
+        # 3. 这样可以确保回测期间内所有交易日使用相同的缓存键
+        #
+        # 性能提升：原本每天都获取数据（120天=120次请求），现在只需1次请求（提升99%+）
 
-        # 为了缓存复用，将结束时间设置为未来N天
-        # 这样回测时可以复用同一份缓存数据，大幅提升性能
-        # 注意：虽然请求未来日期，但数据提供者只会返回已有的历史数据
-        # khHistory会在后续严格过滤到current_datetime之前的数据，不会泄露未来数据
-        cache_buffer_days = 30  # 缓存覆盖未来30天
-        end_dt = current_datetime + timedelta(days=cache_buffer_days)
-        end_time = end_dt.strftime('%Y%m%d')
+        # 固定的缓存范围（确保涵盖整个回测期间所需的历史数据）
+        cache_start_offset = 360  # 向前360天（约1年），确保有足够历史数据
+        cache_end_offset = 180   # 向后180天（约6个月），适应不同回测周期
+
+        # 计算固定的缓存时间范围（关键：不随current_datetime变化）
+        # 使用年初作为基准点，确保同一年的回测使用相同缓存
+        year_start = datetime(current_datetime.year, 1, 1)
+
+        # start_time: 从年初向前推cache_start_offset天
+        cache_start_dt = year_start - timedelta(days=cache_start_offset)
+        start_time = cache_start_dt.strftime('%Y%m%d')
+
+        # end_time: 从年末向后推cache_end_offset天
+        year_end = datetime(current_datetime.year, 12, 31)
+        cache_end_dt = year_end + timedelta(days=cache_end_offset)
+        end_time = cache_end_dt.strftime('%Y%m%d')
+
+        # 注意：
+        # 1. 虽然请求的时间范围很大（~2年），但mootdx每次只返回最近800条数据
+        # 2. 对于日线数据，800天 ≈ 3年多数据，完全满足回测需求
+        # 3. khHistory后续会严格过滤到current_datetime之前的数据，不会泄露未来数据
+        # 4. 所有交易日使用相同的(start_time, end_time)，确保缓存键相同，实现100%缓存命中
 
         # 检查缓存（优化：复用更大范围的缓存数据）
         global _khHistory_cache
         logger = logging.getLogger(__name__)
 
-        # 调试：打印查询范围
+        # 缓存键（关键：使用固定的时间范围）
+        cache_key = (tuple(sorted(stock_codes)), period, start_time, end_time, dividend_type)
+
+        # 调试日志：打印缓存策略
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"khHistory查询: {stock_codes}, bar_count={bar_count}, lookback_days={lookback_days}, 范围={start_time}~{end_time}")
+            logger.debug(f"[缓存策略] 当前日期={current_datetime.strftime('%Y%m%d')}, 缓存范围={start_time}~{end_time}")
+            logger.debug(f"[缓存策略] 缓存键: stocks={stock_codes}, period={period}, range={start_time}~{end_time}, div={dividend_type}")
+            logger.debug(f"[缓存状态] 现有缓存数: {len(_khHistory_cache)}")
 
-        # 尝试查找可复用的缓存（同股票、同周期、同复权、时间范围包含请求范围）
+        # === 缓存查找优化 ===
+        # 优化前：遍历所有缓存键，时间复杂度O(n)
+        # 优化后：直接查找固定键，时间复杂度O(1)
+        #
+        # 由于使用了固定的时间范围，所有交易日的缓存键完全相同
+        # 因此可以直接使用字典查找，无需遍历
         data = None
-        cache_hit_key = None
 
-        for cached_key in _khHistory_cache.keys():
-            cached_stocks, cached_period, cached_start, cached_end, cached_div = cached_key
-
-            # 检查是否可复用：股票列表相同、周期相同、复权方式相同、时间范围完全包含请求范围
-            # 修复：允许缓存的时间范围包含请求范围（cached_start <= start_time AND cached_end >= end_time）
-            # 这样回测时可以复用同一份历史数据，大幅提升性能
-            if (cached_stocks == tuple(sorted(stock_codes)) and
-                cached_period == period and
-                cached_div == dividend_type and
-                cached_start <= start_time and
-                cached_end >= end_time):  # 缓存的时间范围完全包含请求范围
-
-                # 找到可复用的缓存
-                data = _khHistory_cache[cached_key]
-                cache_hit_key = cached_key
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"缓存命中: 复用 {cached_start}~{cached_end} 的数据用于 {start_time}~{end_time}")
-                break
+        if cache_key in _khHistory_cache:
+            # 直接命中缓存（O(1)操作）
+            data = _khHistory_cache[cache_key]
+            logger.info(f"✅ [缓存命中] 直接使用缓存数据 {start_time}~{end_time}")
+        else:
+            # 缓存未命中，记录日志
+            logger.info(f"❌ [缓存未命中] 需要获取新数据 {start_time}~{end_time}")
 
         if data is None:
             # 未找到可复用缓存，获取新数据
@@ -2429,10 +2460,11 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
 
             # 存入缓存（仅当成功获取数据时）
             if data:
-                cache_key = (tuple(sorted(stock_codes)), period, start_time, end_time, dividend_type)
                 _khHistory_cache[cache_key] = data
+                logger.info(f"💾 [缓存存储] 成功缓存 {len(stock_codes)}只股票数据, 范围={start_time}~{end_time}")
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"缓存数据: {len(stock_codes)}只股票, {period}, {start_time}~{end_time}")
+                    logger.debug(f"[缓存详情] 缓存键: {cache_key}")
+                    logger.debug(f"[缓存详情] 当前缓存总数: {len(_khHistory_cache)}")
         
         if not data:
             print("未获取到任何数据")
