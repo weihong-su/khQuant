@@ -2108,7 +2108,7 @@ class KhQuantFramework:
                     )
 
                     benchmark_data = provider.get_market_data(
-                        field_list=['close'],
+                        field_list=['time', 'close'],
                         stock_list=[benchmark_code],
                         period='1d',
                         start_time=self.config.backtest_start,
