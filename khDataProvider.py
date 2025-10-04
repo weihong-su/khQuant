@@ -13,8 +13,12 @@ from typing import Dict, List, Optional, Union
 import pandas as pd
 from datetime import datetime
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+# Mootdx原始数据缓存 (模块级)
+_mootdx_raw_cache = {}
 
 
 # ============================================================================
@@ -325,6 +329,56 @@ class MootdxAdapter(DataProviderInterface):
             logger.error(f"Mootdx 导入失败: {e}")
             raise RuntimeError("请先安装 mootdx: pip install mootdx")
 
+    def _call_mootdx_with_retry(self, is_index, clean_code, frequency, offset, adjust=None, max_retries=3):
+        """带缓存和重试的Mootdx调用"""
+        # 生成缓存键
+        cache_key = (clean_code, frequency, offset, adjust, is_index)
+
+        # 检查缓存
+        global _mootdx_raw_cache
+        if cache_key in _mootdx_raw_cache:
+            logger.info(f"✅ [Mootdx缓存命中] {clean_code}")
+            return _mootdx_raw_cache[cache_key].copy()
+
+        # 缓存未命中,网络请求 (带重试)
+        logger.info(f"❌ [Mootdx缓存未命中] {clean_code}, 开始网络请求...")
+
+        for attempt in range(max_retries):
+            try:
+                start_time = time.time()
+
+                if is_index:
+                    df = self.client.index_bars(symbol=clean_code, frequency=frequency, offset=offset)
+                else:
+                    df = self.client.bars(symbol=clean_code, frequency=frequency, offset=offset, adjust=adjust)
+
+                elapsed = time.time() - start_time
+
+                if df is not None and not df.empty:
+                    _mootdx_raw_cache[cache_key] = df.copy()
+                    logger.info(f"💾 [Mootdx缓存已更新] {clean_code}, shape={df.shape}, 耗时={elapsed:.2f}秒")
+                    return df
+                elif df is not None:
+                    logger.warning(f"⚠️ [Mootdx返回空数据] {clean_code}")
+                    return df
+
+            except Exception as e:
+                logger.warning(f"Mootdx调用失败 (尝试{attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 指数退避
+
+        logger.error(f"❌ [Mootdx调用最终失败] {clean_code}")
+        return None
+
+    @classmethod
+    def clear_mootdx_cache(cls):
+        """清理缓存"""
+        global _mootdx_raw_cache
+        count = len(_mootdx_raw_cache)
+        _mootdx_raw_cache.clear()
+        logger.info(f"已清理Mootdx缓存, 释放{count}条记录")
+        return count
+
     def download_history_data(
         self,
         stock_code: Union[str, List[str]],
@@ -383,28 +437,16 @@ class MootdxAdapter(DataProviderInterface):
                 logger.debug(f"正在获取 {code} ({clean_code}) 的数据, period={period}, frequency={frequency}, offset={offset}, is_index={is_index}")
 
                 if self.mode == 'online':
-                    # 在线模式
-                    try:
-                        # 根据是否为指数选择不同的方法
-                        if is_index:
-                            df = self.client.index_bars(
-                                symbol=clean_code,
-                                frequency=frequency,
-                                offset=offset
-                            )
-                        else:
-                            df = self.client.bars(
-                                symbol=clean_code,
-                                frequency=frequency,
-                                offset=offset,
-                                adjust=adjust
-                            )
-                        logger.debug(f"Mootdx返回: type={type(df)}, is_none={df is None}, empty={df.empty if df is not None else 'N/A'}")
-                        if df is not None and hasattr(df, 'shape'):
-                            logger.debug(f"数据形状: {df.shape}, 列名: {list(df.columns)}")
-                    except Exception as e:
-                        logger.error(f"Mootdx {'index_bars' if is_index else 'bars'}()调用失败 ({code}): {e}")
-                        df = None
+                    # 在线模式 (使用带缓存的调用)
+                    df = self._call_mootdx_with_retry(
+                        is_index=is_index,
+                        clean_code=clean_code,
+                        frequency=frequency,
+                        offset=offset,
+                        adjust=adjust
+                    )
+                    if df is not None and hasattr(df, 'shape'):
+                        logger.debug(f"Mootdx返回: shape={df.shape}")
                 else:
                     # 离线模式
                     if period == '1d':
