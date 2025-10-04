@@ -2422,11 +2422,11 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
         # 缓存键（关键：使用固定的时间范围）
         cache_key = (tuple(sorted(stock_codes)), period, start_time, end_time, dividend_type)
 
-        # 调试日志：打印缓存策略
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[缓存策略] 当前日期={current_datetime.strftime('%Y%m%d')}, 缓存范围={start_time}~{end_time}")
-            logger.debug(f"[缓存策略] 缓存键: stocks={stock_codes}, period={period}, range={start_time}~{end_time}, div={dividend_type}")
-            logger.debug(f"[缓存状态] 现有缓存数: {len(_khHistory_cache)}")
+        # 移除冗余DEBUG日志以提升性能
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     logger.debug(f"[缓存策略] 当前日期={current_datetime.strftime('%Y%m%d')}, 缓存范围={start_time}~{end_time}")
+        #     logger.debug(f"[缓存策略] 缓存键: stocks={stock_codes}, period={period}, range={start_time}~{end_time}, div={dividend_type}")
+        #     logger.debug(f"[缓存状态] 现有缓存数: {len(_khHistory_cache)}")
 
         # === 缓存查找优化 ===
         # 优化前：遍历所有缓存键，时间复杂度O(n)
@@ -2439,7 +2439,7 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
         if cache_key in _khHistory_cache:
             # 直接命中缓存（O(1)操作）
             data = _khHistory_cache[cache_key]
-            logger.info(f"✅ [缓存命中] 直接使用缓存数据 {start_time}~{end_time}")
+            # logger.info(f"✅ [缓存命中] 直接使用缓存数据 {start_time}~{end_time}")
         else:
             # 缓存未命中，记录日志
             logger.info(f"❌ [缓存未命中] 需要获取新数据 {start_time}~{end_time}")
@@ -2462,9 +2462,10 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
             if data:
                 _khHistory_cache[cache_key] = data
                 logger.info(f"💾 [缓存存储] 成功缓存 {len(stock_codes)}只股票数据, 范围={start_time}~{end_time}")
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[缓存详情] 缓存键: {cache_key}")
-                    logger.debug(f"[缓存详情] 当前缓存总数: {len(_khHistory_cache)}")
+                # 移除冗余DEBUG日志以提升性能
+                # if logger.isEnabledFor(logging.DEBUG):
+                #     logger.debug(f"[缓存详情] 缓存键: {cache_key}")
+                #     logger.debug(f"[缓存详情] 当前缓存总数: {len(_khHistory_cache)}")
         
         if not data:
             print("未获取到任何数据")
@@ -2490,11 +2491,11 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
             # 处理时间：支持时间在列中（xtquant）或在索引中（mootdx）
             time_in_index = isinstance(stock_data.index, pd.DatetimeIndex) or stock_data.index.name in ['time', 'timestamp', 'date', 'datetime']
 
-            # 仅在调试模式下输出详细信息
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"股票={stock_code}, 原始数据={len(stock_data)}条, time_in_index={time_in_index}")
-                if len(stock_data) > 0:
-                    logger.debug(f"数据时间范围: {stock_data.index.min()} 到 {stock_data.index.max()}")
+            # 移除冗余DEBUG日志以提升性能
+            # if logger.isEnabledFor(logging.DEBUG):
+            #     logger.debug(f"股票={stock_code}, 原始数据={len(stock_data)}条, time_in_index={time_in_index}")
+            #     if len(stock_data) > 0:
+            #         logger.debug(f"数据时间范围: {stock_data.index.min()} 到 {stock_data.index.max()}")
 
             if time_in_index:
                 # 时间在索引中（mootdx格式）
@@ -2555,9 +2556,9 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
             if not stock_data.empty and len(stock_data) > bar_count:
                 stock_data = stock_data.tail(bar_count).reset_index(drop=True)
 
-            # 仅在数据不足时输出警告
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"股票={stock_code}, 筛选后数据={len(stock_data)}条, 请求={bar_count}条")
+            # 移除冗余DEBUG日志以提升性能
+            # if logger.isEnabledFor(logging.DEBUG):
+            #     logger.debug(f"股票={stock_code}, 筛选后数据={len(stock_data)}条, 请求={bar_count}条")
 
             # 重新整理列顺序，确保time列在前
             columns_order = ['time'] + [col for col in fields if col in stock_data.columns]

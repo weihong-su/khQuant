@@ -337,7 +337,7 @@ class MootdxAdapter(DataProviderInterface):
         # 检查缓存
         global _mootdx_raw_cache
         if cache_key in _mootdx_raw_cache:
-            logger.info(f"✅ [Mootdx缓存命中] {clean_code}")
+            # logger.info(f"✅ [Mootdx缓存命中] {clean_code}")
             return _mootdx_raw_cache[cache_key].copy()
 
         # 缓存未命中,网络请求 (带重试)
@@ -445,8 +445,9 @@ class MootdxAdapter(DataProviderInterface):
                         offset=offset,
                         adjust=adjust
                     )
-                    if df is not None and hasattr(df, 'shape'):
-                        logger.debug(f"Mootdx返回: shape={df.shape}")
+                    # 移除冗余DEBUG日志
+                    # if df is not None and hasattr(df, 'shape'):
+                    #     logger.debug(f"Mootdx返回: shape={df.shape}")
                 else:
                     # 离线模式
                     if period == '1d':
@@ -459,14 +460,14 @@ class MootdxAdapter(DataProviderInterface):
 
                 if df is not None and not df.empty:
                     # 重命名列以匹配 xtquant 格式
-                    logger.debug(f"标准化前: columns={list(df.columns)}, shape={df.shape}")
+                    # 移除冗余DEBUG日志: logger.debug(f"标准化前: columns={list(df.columns)}, shape={df.shape}")
                     df = self._normalize_dataframe(df, field_list)
-                    logger.debug(f"标准化后: columns={list(df.columns)}, shape={df.shape}")
+                    # 移除冗余DEBUG日志: logger.debug(f"标准化后: columns={list(df.columns)}, shape={df.shape}")
 
                     # 按时间范围筛选（mootdx不支持时间范围参数，需要手动筛选）
                     if not df.empty and start_time and end_time:
                         df = self._filter_by_time_range(df, start_time, end_time)
-                        logger.debug(f"时间筛选后: shape={df.shape}")
+                        # 移除冗余DEBUG日志: logger.debug(f"时间筛选后: shape={df.shape}")
 
                     if not df.empty:
                         result[code] = df
