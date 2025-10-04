@@ -395,11 +395,13 @@ def khPrice(data: Dict, stock_code: str, field: str = 'close') -> float:
             result = float(price_val)
             # 检查是否为有效数字
             if np.isnan(result) or np.isinf(result):
-                logging.warning(f"股票 {stock_code} 的 {field} 价格数据无效: {result}")
+                # 价格为NaN通常是节假日或停牌,降级为DEBUG避免误导用户
+                logging.debug(f"跳过 {stock_code} 的 {field} 数据 (值为{result}, 可能是节假日或停牌)")
                 return 0.0
             return result
         except (ValueError, TypeError):
-            logging.warning(f"股票 {stock_code} 的 {field} 价格数据无法转换为数字: {price_val}")
+            # 数据转换失败也降级为DEBUG
+            logging.debug(f"股票 {stock_code} 的 {field} 价格数据无法转换为数字: {price_val}")
             return 0.0
             
     except Exception as e:

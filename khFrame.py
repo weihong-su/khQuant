@@ -2117,49 +2117,59 @@ class KhQuantFramework:
                     
                     if self.trader_callback:
                         self.trader_callback.gui.log_message(
-                            f"基准数据获取结果: {benchmark_data.keys()}", 
+                            f"基准数据获取结果: {benchmark_data.keys()}",
                             "INFO"
                         )
 
-                    if benchmark_data and 'close' in benchmark_data and len(benchmark_data['close']) > 0:
-                        closes = benchmark_data['close'].values[0]  # 获取收盘价数据
-                        if len(closes) > 0:
-                            # 直接从benchmark_data中获取日期数据
-                            # 获取交易日期索引
-                            if 'date' in benchmark_data:
-                                dates = benchmark_data['date'][0]  # 使用benchmark_data中的日期
-                            elif hasattr(benchmark_data, 'index') and benchmark_data.index is not None and not isinstance(benchmark_data.index, pd.RangeIndex):
-                                dates = benchmark_data.index  # 有些情况下日期可能在索引中
-                            elif hasattr(benchmark_data['close'], 'columns') and len(benchmark_data['close'].columns) > 0:
-                                # 从columns中获取日期（日期作为列名出现的情况）
-                                date_cols = [col for col in benchmark_data['close'].columns if str(col).isdigit()]
-                                if date_cols:
-                                    # 将列名转换为日期对象
-                                    dates = pd.to_datetime(date_cols, format='%Y%m%d')
-                                    # 确保closes的顺序与dates匹配
-                                    closes = np.array([benchmark_data['close'].iloc[0][col] for col in date_cols])
-                                else:
-                                    # 如果没有日期数据，才使用日期范围（不推荐）
-                                    self.trader_callback.gui.log_message(
-                                        "警告：基准数据中没有日期信息，将使用日期范围替代，可能不准确",
-                                        "WARNING"
-                                    )
-                                    dates = pd.date_range(
-                                        start=pd.to_datetime(self.config.backtest_start, format='%Y%m%d'),
-                                        end=pd.to_datetime(self.config.backtest_end, format='%Y%m%d'),
-                                        freq='B'  # 使用工作日频率
-                                    )
-                                
+                    # 修复：正确访问嵌套字典结构
+                    if benchmark_data and benchmark_code in benchmark_data:
+                        stock_data = benchmark_data[benchmark_code]
+
+                        if 'close' in stock_data and len(stock_data['close']) > 0:
+                            closes = stock_data['close']  # 获取收盘价数据
+
+                            # 直接从stock_data中获取日期数据
+                            if 'time' in stock_data and len(stock_data['time']) > 0:
+                                # 使用time字段（毫秒时间戳）转换为日期
+                                timestamps = stock_data['time']
+                                dates = pd.to_datetime(timestamps, unit='ms')
+
                                 # 创建包含日期和收盘价的DataFrame
                                 df = pd.DataFrame({
                                     'date': dates,
                                     'close': closes
                                 })
-                                
+
                                 # 保存到benchmark.csv
                                 benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
                                 df.to_csv(benchmark_file, index=False)
-                                
+
+                                if self.trader_callback:
+                                    self.trader_callback.gui.log_message(
+                                        f"基准指数数据已保存到 {benchmark_file}, 共 {len(df)} 条记录",
+                                        "INFO"
+                                    )
+                            else:
+                                # 如果没有time字段，使用日期范围（备用方案）
+                                if self.trader_callback:
+                                    self.trader_callback.gui.log_message(
+                                        "警告：基准数据中没有时间信息，将使用日期范围替代",
+                                        "WARNING"
+                                    )
+                                dates = pd.date_range(
+                                    start=pd.to_datetime(self.config.backtest_start, format='%Y%m%d'),
+                                    end=pd.to_datetime(self.config.backtest_end, format='%Y%m%d'),
+                                    freq='B'  # 使用工作日频率
+                                )[:len(closes)]  # 确保长度匹配
+
+                                df = pd.DataFrame({
+                                    'date': dates,
+                                    'close': closes
+                                })
+
+                                benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
+                                df.to_csv(benchmark_file, index=False)
+
                                 if self.trader_callback:
                                     self.trader_callback.gui.log_message(
                                         f"基准指数数据已保存到 {benchmark_file}, 共 {len(df)} 条记录",
@@ -2167,10 +2177,16 @@ class KhQuantFramework:
                                     )
                         else:
                             if self.trader_callback:
-                                self.trader_callback.gui.log_message(f"基准指数 {benchmark_code} 收盘价数据为空", "WARNING")
+                                self.trader_callback.gui.log_message(
+                                    f"基准指数 {benchmark_code} 收盘价数据为空",
+                                    "WARNING"
+                                )
                     else:
                         if self.trader_callback:
-                            self.trader_callback.gui.log_message(f"基准指数 {benchmark_code} 数据获取失败", "WARNING")
+                            self.trader_callback.gui.log_message(
+                                f"基准指数 {benchmark_code} 数据获取失败（返回数据格式错误）",
+                                "WARNING"
+                            )
                 except Exception as e:
                     if self.trader_callback:
                         self.trader_callback.gui.log_message(f"获取基准指数数据时出错: {str(e)}", "ERROR")

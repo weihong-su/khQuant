@@ -388,7 +388,8 @@ class MootdxAdapter(DataProviderInterface):
         **kwargs
     ) -> bool:
         """下载历史数据（Mootdx 自动在线获取，无需单独下载）"""
-        logger.warning("Mootdx 模式下无需预下载数据，数据在get_market_data时自动获取")
+        # Mootdx采用按需加载模式,无需预下载 (正常设计,不需要WARNING)
+        logger.debug("Mootdx 模式采用按需加载,跳过预下载步骤")
         return True
 
     def get_market_data(
