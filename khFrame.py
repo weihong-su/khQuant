@@ -1450,10 +1450,21 @@ class KhQuantFramework:
                                 all_times.extend(times)
                                 if self.trader_callback:
                                     self.trader_callback.gui.log_message(f"从{code}的DataFrame的{time_field}字段中提取了{len(times)}个时间点", "INFO")
+                    elif isinstance(df, dict):
+                        # 字典结构处理（Mootdx格式）
+                        if 'time' in df:
+                            times = df['time']
+                            all_times.extend(times)
+                            if self.trader_callback:
+                                self.trader_callback.gui.log_message(f"从{code}的字典数据中提取了{len(times)}个时间点", "INFO")
+                        else:
+                            if self.trader_callback:
+                                self.trader_callback.gui.log_message(f"错误: {code}的字典数据中没有找到time字段，跳过该股票", "ERROR")
+                            continue
                     else:
                         # 处理其他可能的数据结构
                         if self.trader_callback:
-                            self.trader_callback.gui.log_message(f"警告: {code}的数据不是DataFrame格式，跳过该股票", "WARNING")
+                            self.trader_callback.gui.log_message(f"警告: {code}的数据格式未知(类型: {type(df)})，跳过该股票", "WARNING")
                         continue
             
             # 去重并排序
@@ -1508,38 +1519,60 @@ class KhQuantFramework:
                     # 找到时间字段：优先检查索引，然后检查列
                     time_field_found = False
 
-                    # 首先检查索引是否为时间索引
-                    if isinstance(df.index, pd.DatetimeIndex) or df.index.name in ['time', 'timestamp', 'date', 'datetime']:
-                        # 使用索引作为时间字段
-                        self.time_field_cache[code] = '__index__'  # 特殊标记表示使用索引
-                        self.historical_data_ref[code] = df
+                    if isinstance(df, pd.DataFrame):
+                        # DataFrame 格式处理（XtQuant）
+                        # 首先检查索引是否为时间索引
+                        if isinstance(df.index, pd.DatetimeIndex) or df.index.name in ['time', 'timestamp', 'date', 'datetime']:
+                            # 使用索引作为时间字段
+                            self.time_field_cache[code] = '__index__'  # 特殊标记表示使用索引
+                            self.historical_data_ref[code] = df
 
-                        # 预先创建时间值到索引的映射
-                        time_idx_map = {}
-                        for i, tv in enumerate(df.index):
-                            # 将 Timestamp 转换为秒级时间戳
-                            if hasattr(tv, 'timestamp'):
-                                timestamp_sec = int(tv.timestamp())
-                                time_idx_map[timestamp_sec] = i
-                            time_idx_map[tv] = i  # 也保存原始值
-                        self.time_idx_cache[code] = time_idx_map
-                        time_field_found = True
+                            # 预先创建时间值到索引的映射
+                            time_idx_map = {}
+                            for i, tv in enumerate(df.index):
+                                # 将 Timestamp 转换为秒级时间戳
+                                if hasattr(tv, 'timestamp'):
+                                    timestamp_sec = int(tv.timestamp())
+                                    time_idx_map[timestamp_sec] = i
+                                time_idx_map[tv] = i  # 也保存原始值
+                            self.time_idx_cache[code] = time_idx_map
+                            time_field_found = True
 
-                    else:
-                        # 然后检查列
-                        for field in ['time', 'timestamp', 'date', 'datetime']:
-                            if field in df.columns:
-                                self.time_field_cache[code] = field
-                                self.historical_data_ref[code] = df
+                        else:
+                            # 然后检查列
+                            for field in ['time', 'timestamp', 'date', 'datetime']:
+                                if field in df.columns:
+                                    self.time_field_cache[code] = field
+                                    self.historical_data_ref[code] = df
 
-                                # 预先创建时间值到索引的映射
-                                time_values = df[field].values
-                                time_idx_map = {}
-                                for i, tv in enumerate(time_values):
-                                    time_idx_map[tv] = i
-                                self.time_idx_cache[code] = time_idx_map
-                                time_field_found = True
-                                break
+                                    # 预先创建时间值到索引的映射
+                                    time_values = df[field].values
+                                    time_idx_map = {}
+                                    for i, tv in enumerate(time_values):
+                                        time_idx_map[tv] = i
+                                    self.time_idx_cache[code] = time_idx_map
+                                    time_field_found = True
+                                    break
+
+                    elif isinstance(df, dict):
+                        # 字典格式处理（Mootdx）
+                        if 'time' in df:
+                            self.time_field_cache[code] = 'time'
+                            self.historical_data_ref[code] = df
+
+                            # 预先创建时间值到索引的映射
+                            time_values = df['time']
+                            time_idx_map = {}
+                            for i, tv in enumerate(time_values):
+                                time_idx_map[tv] = i
+                                # 同时处理毫秒/秒的转换
+                                if isinstance(tv, (int, float)):
+                                    if tv > 1e10:  # 毫秒级
+                                        time_idx_map[tv // 1000] = i  # 也存储秒级
+                                    else:  # 秒级
+                                        time_idx_map[tv * 1000] = i  # 也存储毫秒级
+                            self.time_idx_cache[code] = time_idx_map
+                            time_field_found = True
 
                     if not time_field_found and self.trader_callback:
                         self.trader_callback.gui.log_message(
@@ -1666,36 +1699,80 @@ class KhQuantFramework:
                         time_field = self.time_field_cache[code]
                         time_idx_map = self.time_idx_cache[code]
                         df = self.historical_data_ref[code]
-                        
-                        # 尝试直接匹配当前时间
-                        if current_time in time_idx_map:
-                            idx = time_idx_map[current_time]
-                            # 直接存储行引用，而不是转换为字典
-                            current_data[code] = df.iloc[idx]
-                        else:
-                            # 尝试处理精度不一致问题
-                            matched = False
-                            idx = -1
-                            
-                            if isinstance(current_time, (int, float)):
-                                # 处理毫秒/秒的转换
-                                if current_time > 1e10:  # 毫秒级
-                                    sec_time = current_time // 1000
-                                    if sec_time in time_idx_map:
-                                        idx = time_idx_map[sec_time]
-                                        matched = True
-                                else:  # 秒级
-                                    ms_time = current_time * 1000
-                                    if ms_time in time_idx_map:
-                                        idx = time_idx_map[ms_time]
-                                        matched = True
-                            
-                            if matched:
-                                # 直接存储行引用
+
+                        # 检查数据格式：DataFrame 或 字典
+                        if isinstance(df, pd.DataFrame):
+                            # DataFrame 格式处理（XtQuant）
+                            # 尝试直接匹配当前时间
+                            if current_time in time_idx_map:
+                                idx = time_idx_map[current_time]
+                                # 直接存储行引用，而不是转换为字典
                                 current_data[code] = df.iloc[idx]
                             else:
-                                # 没有匹配的数据，存储空Series
-                                current_data[code] = pd.Series({})
+                                # 尝试处理精度不一致问题
+                                matched = False
+                                idx = -1
+
+                                if isinstance(current_time, (int, float)):
+                                    # 处理毫秒/秒的转换
+                                    if current_time > 1e10:  # 毫秒级
+                                        sec_time = current_time // 1000
+                                        if sec_time in time_idx_map:
+                                            idx = time_idx_map[sec_time]
+                                            matched = True
+                                    else:  # 秒级
+                                        ms_time = current_time * 1000
+                                        if ms_time in time_idx_map:
+                                            idx = time_idx_map[ms_time]
+                                            matched = True
+
+                                if matched:
+                                    # 直接存储行引用
+                                    current_data[code] = df.iloc[idx]
+                                else:
+                                    # 没有匹配的数据，存储空Series
+                                    current_data[code] = pd.Series({})
+                        elif isinstance(df, dict):
+                            # 字典格式处理（Mootdx）
+                            if current_time in time_idx_map:
+                                idx = time_idx_map[current_time]
+                                # 从字典中提取对应索引的数据
+                                row_data = {}
+                                for key, values in df.items():
+                                    if isinstance(values, list) and len(values) > idx:
+                                        row_data[key] = values[idx]
+                                current_data[code] = pd.Series(row_data)
+                            else:
+                                # 尝试处理精度不一致问题
+                                matched = False
+                                idx = -1
+
+                                if isinstance(current_time, (int, float)):
+                                    # 处理毫秒/秒的转换
+                                    if current_time > 1e10:  # 毫秒级
+                                        sec_time = current_time // 1000
+                                        if sec_time in time_idx_map:
+                                            idx = time_idx_map[sec_time]
+                                            matched = True
+                                    else:  # 秒级
+                                        ms_time = current_time * 1000
+                                        if ms_time in time_idx_map:
+                                            idx = time_idx_map[ms_time]
+                                            matched = True
+
+                                if matched:
+                                    # 从字典中提取对应索引的数据
+                                    row_data = {}
+                                    for key, values in df.items():
+                                        if isinstance(values, list) and len(values) > idx:
+                                            row_data[key] = values[idx]
+                                    current_data[code] = pd.Series(row_data)
+                                else:
+                                    # 没有匹配的数据，存储空Series
+                                    current_data[code] = pd.Series({})
+                        else:
+                            # 未知格式
+                            current_data[code] = pd.Series({})
                     else:
                         # 没有时间字段的情况
                         current_data[code] = pd.Series({})

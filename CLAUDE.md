@@ -13,6 +13,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 首次使用快速指南（5分钟）
+
+**完整流程**:
+```bash
+# 步骤1: 安装依赖（2分钟）
+pip install -r requirements.txt
+
+# 步骤2: 验证环境（30秒）
+python check_dependencies.py
+python tests/quick_test.py  # V2.2.0新增
+
+# 步骤3: 配置MiniQMT路径（可选，用于xtquant数据源）
+# 编辑系统设置 → userdata_path → 指向MiniQMT安装目录
+
+# 步骤4: 启动主界面（10秒）
+python GUIkhQuant.py
+
+# 步骤5: 加载示例策略
+# 在GUI中选择: strategies/双均线精简_使用khMA函数.py
+# 点击"启动策略"开始回测
+```
+
+**纯回测模式（无需MiniQMT）**:
+```bash
+# V2.2.0支持使用mootdx数据源，无需安装MiniQMT
+# 配置文件中设置: "data_provider": {"type": "mootdx", "mootdx": {"mode": "online"}}
+pip install mootdx
+python GUIkhQuant.py  # 直接启动即可
+```
+
+---
+
 ## 快速启动
 
 ### 环境配置
@@ -45,16 +77,19 @@ python run_scheduled_supplement.py
 
 ### 实用命令
 ```bash
-# 检查依赖是否完整
-python check_dependencies.py
+# 快速验证环境（30秒）
+python check_dependencies.py                        # 1. 检查依赖完整性
+python tests/quick_test.py                          # 2. 快速功能验证（V2.2.0）
+python -c "from version import get_version_info; print(get_version_info())"  # 3. 查看版本
 
-# 查看当前版本信息
-python -c "from version import get_version_info; print(get_version_info())"
-
-# 测试相关命令
+# 单元测试
 python test_settings.py          # 测试系统设置
 python test_date_formats.py      # 测试日期格式处理
 python test_record_count.py      # 测试数据记录统计
+
+# 数据提供者测试（V2.2.0新增）
+python tests/test_data_provider.py      # 完整单元测试套件
+python tests/benchmark_data_provider.py # 性能基准对比
 ```
 
 ### MiniQMT前置依赖
@@ -564,7 +599,20 @@ position = {
 - 次日开盘前或盘后回调时更新 `can_use_volume`
 - 卖出时检查: `volume_to_sell <= can_use_volume`
 
-**注意**: 当前代码在买入时直接增加 `can_use_volume`（khTrade.py:385行），未严格实现T+1，建议在日切时更新。
+⚠️ **已知Bug**: 当前代码在买入时直接增加 `can_use_volume`（[khTrade.py:385](c:\github-repo\khQuant\khTrade.py#L385)），未严格实现T+1制度。
+
+**改进方案**:
+```python
+# 当前实现（错误）
+def _process_buy_signal():
+    position["volume"] += volume
+    position["can_use_volume"] += volume  # ❌ 应该在日切时更新
+
+# 正确实现
+def _on_new_trading_day():
+    for code, pos in positions.items():
+        pos["can_use_volume"] = pos["volume"]  # ✅ 日切时同步
+```
 
 ### 数据不泄露原则
 
@@ -860,11 +908,18 @@ test_time_fix.py          # 测试时间相关修复
 ### 运行测试
 
 ```bash
-# 运行单个测试文件
-python test_settings.py
-
 # 检查依赖完整性（推荐首次运行）
 python check_dependencies.py
+
+# 运行单个测试文件
+python test_settings.py          # 测试系统设置
+python test_date_formats.py      # 测试日期格式
+python test_record_count.py      # 测试数据统计
+
+# V2.2.0 数据提供者测试（新增）
+python tests/test_data_provider.py      # 单元测试套件
+python tests/quick_test.py              # 快速功能验证
+python tests/benchmark_data_provider.py # 性能基准测试
 ```
 
 ### 常见故障排查
@@ -1325,9 +1380,16 @@ if khHas(data, code):
 
 ---
 
-**最后更新**: 2025-10-02
+**最后更新**: 2025-10-04
 **适用版本**: V2.2.0
 **更新内容**:
+
+**V2.2.1 (2025-10-04)** - CLAUDE.md改进:
+- ✨ 新增"首次使用快速指南"（5分钟上手流程）
+- ✨ 补充数据提供者测试命令（tests/目录测试套件）
+- ✨ 明确标注T+1已知Bug及改进方案（khTrade.py:385）
+- ✨ 添加"快速验证环境"命令序列（30秒检查）
+- ✨ 补充纯回测模式说明（无需MiniQMT的mootdx方案）
 
 **V2.2.0 (2025-10-02)** - 数据接口抽象层:
 - 🎉 **重大更新**: 新增数据接口抽象层 (khDataProvider.py)

@@ -747,6 +747,9 @@ class BacktestResultWindow(QMainWindow):
             else:
                 try:
                     benchmark_df = pd.read_csv(benchmark_path, encoding='utf-8-sig')
+                    # 【修复】将日期列转换为datetime类型，确保与策略数据格式一致
+                    if 'date' in benchmark_df.columns:
+                        benchmark_df['date'] = pd.to_datetime(benchmark_df['date'])
                     # 检查基准数据是否为空
                     if len(benchmark_df) == 0 or 'close' not in benchmark_df.columns or 'date' not in benchmark_df.columns:
                         print("基准数据文件为空或缺少必要列")
@@ -1433,17 +1436,25 @@ class BacktestResultWindow(QMainWindow):
                     
                     # 用基准初始值计算基准净值序列
                     benchmark_values = benchmark_df['close'] / benchmark_initial
-                    
+
                     # 处理基准数据长度不匹配的问题
+                    # 【修复】只比较日期部分，忽略时间戳差异
+                    # daily_stats.csv: 2025-01-02 (只有日期)
+                    # benchmark.csv: 2025-01-02 15:00:00 (有完整时间)
                     # 找出基准数据和策略数据共同的日期范围
-                    common_dates = pd.Series(dates).isin(benchmark_df['date'])
+                    dates_normalized = pd.to_datetime(dates).dt.normalize()
+                    benchmark_dates_normalized = pd.to_datetime(benchmark_df['date']).dt.normalize()
+                    common_dates = pd.Series(dates_normalized).isin(benchmark_dates_normalized)
                     if any(common_dates):
                         # 如果有共同日期，使用共同日期绘制基准曲线
                         common_strategy_dates = dates[common_dates]
                         common_strategy_values = strategy_values[common_dates]
-                        
-                        # 找出基准数据中对应的索引
-                        benchmark_indices = benchmark_df['date'].isin(common_strategy_dates)
+
+                        # 【修复】找出基准数据中对应的索引 - 使用归一化后的日期匹配
+                        # 因为common_strategy_dates是从归一化的dates中提取的（00:00:00）
+                        # 而benchmark_df['date']可能有时间戳（15:00:00）
+                        # 必须再次归一化才能正确匹配
+                        benchmark_indices = benchmark_dates_normalized.isin(pd.to_datetime(common_strategy_dates).dt.normalize())
                         benchmark_common_dates = benchmark_df['date'][benchmark_indices]
                         benchmark_common_values = benchmark_values[benchmark_indices]
                         

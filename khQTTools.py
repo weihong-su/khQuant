@@ -2479,14 +2479,40 @@ def khHistory(symbol_list, fields, bar_count, fre_step, current_time=None, skip_
                 continue
             
             stock_data = data[stock_code]
-            
-            if stock_data is None or stock_data.empty:
+
+            # 检查数据是否为空（支持 DataFrame 和字典格式）
+            if stock_data is None:
                 print(f"警告: 股票 {stock_code} 数据为空")
                 result[stock_code] = pd.DataFrame()
                 continue
-            
-            # 复制数据避免修改原始数据
-            stock_data = stock_data.copy()
+
+            # 判断数据格式并转换为 DataFrame
+            if isinstance(stock_data, dict):
+                # 字典格式（Mootdx）- 转换为 DataFrame
+                if not stock_data or 'time' not in stock_data:
+                    print(f"警告: 股票 {stock_code} 字典数据为空或缺少time字段")
+                    result[stock_code] = pd.DataFrame()
+                    continue
+
+                # 从字典创建 DataFrame
+                stock_data = pd.DataFrame(stock_data)
+
+                # 将 time 列转换为日期时间并设为索引
+                if 'time' in stock_data.columns:
+                    # 时间戳转换（毫秒）
+                    stock_data['time'] = pd.to_datetime(stock_data['time'], unit='ms')
+                    stock_data.set_index('time', inplace=True)
+            elif isinstance(stock_data, pd.DataFrame):
+                # DataFrame 格式（XtQuant）- 复制以避免修改原始数据
+                if stock_data.empty:
+                    print(f"警告: 股票 {stock_code} 数据为空")
+                    result[stock_code] = pd.DataFrame()
+                    continue
+                stock_data = stock_data.copy()
+            else:
+                print(f"警告: 股票 {stock_code} 数据格式未知: {type(stock_data)}")
+                result[stock_code] = pd.DataFrame()
+                continue
 
             # 处理时间：支持时间在列中（xtquant）或在索引中（mootdx）
             time_in_index = isinstance(stock_data.index, pd.DatetimeIndex) or stock_data.index.name in ['time', 'timestamp', 'date', 'datetime']

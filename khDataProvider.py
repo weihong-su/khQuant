@@ -471,7 +471,8 @@ class MootdxAdapter(DataProviderInterface):
                         # 移除冗余DEBUG日志: logger.debug(f"时间筛选后: shape={df.shape}")
 
                     if not df.empty:
-                        result[code] = df
+                        # 转换为 XtQuant 兼容的字典格式
+                        result[code] = self._convert_to_xtquant_format(df, field_list)
                         logger.info(f"成功添加 {code} 数据到结果集")
                     else:
                         logger.warning(f"标准化后 {code} 数据为空")
@@ -599,13 +600,11 @@ class MootdxAdapter(DataProviderInterface):
         """标准化 DataFrame 列名和格式"""
         # Mootdx 列名: ['date', 'open', 'high', 'low', 'close', 'volume', 'amount']
         # XtQuant 列名: ['time', 'open', 'high', 'low', 'close', 'volume', 'amount']
+        # 注意: Mootdx 的 'date' 已被设置为索引（DatetimeIndex），不在列中
 
-        if 'date' in df.columns:
-            df = df.rename(columns={'date': 'time'})
-
-        # 只保留需要的字段
-        available_fields = [f for f in ['time'] + field_list if f in df.columns]
-        return df[available_fields]
+        # 只保留需要的字段（不包括 time，因为它在索引中）
+        available_fields = [f for f in field_list if f in df.columns]
+        return df[available_fields] if available_fields else df
 
     def _filter_by_time_range(self, df: pd.DataFrame, start_time: str, end_time: str) -> pd.DataFrame:
         """按时间范围筛选数据
@@ -627,6 +626,11 @@ class MootdxAdapter(DataProviderInterface):
             start_dt = pd.to_datetime(start_time, format='%Y%m%d')
             end_dt = pd.to_datetime(end_time, format='%Y%m%d')
 
+            # 调试：显示原始数据的日期范围
+            if len(df) > 0:
+                logger.debug(f"原始数据日期范围: {df.index.min()} ~ {df.index.max()}")
+                logger.debug(f"请求筛选范围: {start_dt} ~ {end_dt}")
+
             # 筛选数据（包含起止日期）
             mask = (df.index.date >= start_dt.date()) & (df.index.date <= end_dt.date())
             filtered_df = df[mask]
@@ -637,6 +641,31 @@ class MootdxAdapter(DataProviderInterface):
         except Exception as e:
             logger.error(f"时间筛选失败: {e}")
             return df
+
+    def _convert_to_xtquant_format(self, df: pd.DataFrame, field_list: List[str]) -> Dict:
+        """将 DataFrame 转换为 XtQuant 兼容的字典格式
+
+        Args:
+            df: DataFrame，索引为 DatetimeIndex
+            field_list: 需要的字段列表
+
+        Returns:
+            字典格式: {'time': [...], 'close': [...], ...}
+        """
+        result = {}
+
+        # 处理时间字段：从索引提取
+        if isinstance(df.index, pd.DatetimeIndex):
+            # 转换为毫秒时间戳（与 XtQuant 保持一致）
+            result['time'] = (df.index.astype('int64') // 10**6).tolist()
+
+        # 处理其他字段：从列提取
+        for field in field_list:
+            if field in df.columns:
+                result[field] = df[field].tolist()
+
+        logger.debug(f"转换为 XtQuant 格式: keys={list(result.keys())}, time_len={len(result.get('time', []))}")
+        return result
 
 
 # ============================================================================
