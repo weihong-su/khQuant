@@ -1,8 +1,8 @@
 # version.py
 
 VERSION_INFO = {
-    "version": "2.2.0",          # 当前版本号
-    "build_date": "2025-10-02",  # 构建日期
+    "version": "2.2.3.1",        # 当前版本号
+    "build_date": "2025-10-05",  # 构建日期
     "channel": "stable",         # 更新通道
     "app_name": "看海量化回测平台" # 应用名称
 }

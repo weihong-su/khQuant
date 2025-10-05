@@ -268,3 +268,7 @@ docs/_build/
 doc/_build/ 
 __pycache__/
 app.log
+__pycache__/GUIplotLoadData.cpython-311.pyc
+__pycache__/khQTTools.cpython-311.pyc
+__pycache__/update_manager.cpython-311.pyc
+__pycache__/version.cpython-311.pyc

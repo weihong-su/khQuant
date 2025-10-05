@@ -471,9 +471,10 @@ class MootdxAdapter(DataProviderInterface):
                         # 移除冗余DEBUG日志: logger.debug(f"时间筛选后: shape={df.shape}")
 
                     if not df.empty:
-                        # 转换为 XtQuant 兼容的字典格式
-                        result[code] = self._convert_to_xtquant_format(df, field_list)
-                        logger.info(f"成功添加 {code} 数据到结果集")
+                        # ✅ 性能优化：直接返回DataFrame格式，与XtQuant保持一致
+                        # 不再转换为Dict格式，避免回测循环中的重复转化
+                        result[code] = df
+                        logger.info(f"成功添加 {code} 数据到结果集 (DataFrame格式，{len(df)}行)")
                     else:
                         logger.warning(f"标准化后 {code} 数据为空")
                 else:
@@ -645,6 +646,9 @@ class MootdxAdapter(DataProviderInterface):
     def _convert_to_xtquant_format(self, df: pd.DataFrame, field_list: List[str]) -> Dict:
         """将 DataFrame 转换为 XtQuant 兼容的字典格式
 
+        ⚠️ 已废弃: V2.2.3开始直接返回DataFrame格式，不再使用此方法
+        保留此方法仅为兼容性，未来版本将移除
+
         Args:
             df: DataFrame，索引为 DatetimeIndex
             field_list: 需要的字段列表
@@ -652,6 +656,7 @@ class MootdxAdapter(DataProviderInterface):
         Returns:
             字典格式: {'time': [...], 'close': [...], ...}
         """
+        logger.warning("⚠️ _convert_to_xtquant_format已废弃，请使用DataFrame格式")
         result = {}
 
         # 处理时间字段：从索引提取

@@ -1700,13 +1700,14 @@ class KhQuantFramework:
                         time_idx_map = self.time_idx_cache[code]
                         df = self.historical_data_ref[code]
 
-                        # 检查数据格式：DataFrame 或 字典
+                        # ✅ 性能优化：统一使用DataFrame格式（V2.2.3）
+                        # XtQuant和Mootdx都返回DataFrame，简化处理逻辑
                         if isinstance(df, pd.DataFrame):
-                            # DataFrame 格式处理（XtQuant）
+                            # DataFrame 格式处理（统一格式）
                             # 尝试直接匹配当前时间
                             if current_time in time_idx_map:
                                 idx = time_idx_map[current_time]
-                                # 直接存储行引用，而不是转换为字典
+                                # ✅ 直接切片，零转化
                                 current_data[code] = df.iloc[idx]
                             else:
                                 # 尝试处理精度不一致问题
@@ -1727,13 +1728,15 @@ class KhQuantFramework:
                                             matched = True
 
                                 if matched:
-                                    # 直接存储行引用
+                                    # 直接切片
                                     current_data[code] = df.iloc[idx]
                                 else:
                                     # 没有匹配的数据，存储空Series
                                     current_data[code] = pd.Series({})
                         elif isinstance(df, dict):
-                            # 字典格式处理（Mootdx）
+                            # ⚠️ 兼容性处理：旧版本Dict格式（将在未来版本移除）
+                            # 正常情况下不应该走到这里，如果走到这里说明使用了旧格式
+                            logger.warning(f"⚠️ 检测到旧Dict格式数据: {code}，建议升级数据提供者")
                             if current_time in time_idx_map:
                                 idx = time_idx_map[current_time]
                                 # 从字典中提取对应索引的数据
@@ -2198,65 +2201,90 @@ class KhQuantFramework:
                             "INFO"
                         )
 
-                    # 修复：正确访问嵌套字典结构
+                    # V2.2.3.1修复：支持DataFrame和Dict两种格式的基准数据
                     if benchmark_data and benchmark_code in benchmark_data:
                         stock_data = benchmark_data[benchmark_code]
+                        closes = None
+                        dates = None
 
-                        if 'close' in stock_data and len(stock_data['close']) > 0:
-                            closes = stock_data['close']  # 获取收盘价数据
-
-                            # 直接从stock_data中获取日期数据
-                            if 'time' in stock_data and len(stock_data['time']) > 0:
-                                # 使用time字段（毫秒时间戳）转换为日期
-                                timestamps = stock_data['time']
-                                dates = pd.to_datetime(timestamps, unit='ms')
-
-                                # 创建包含日期和收盘价的DataFrame
-                                df = pd.DataFrame({
-                                    'date': dates,
-                                    'close': closes
-                                })
-
-                                # 保存到benchmark.csv
-                                benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
-                                df.to_csv(benchmark_file, index=False)
-
+                        # 统一的数据提取逻辑
+                        if isinstance(stock_data, pd.DataFrame):
+                            # DataFrame格式处理 (V2.2.3新格式)
+                            if 'close' not in stock_data.columns:
                                 if self.trader_callback:
                                     self.trader_callback.gui.log_message(
-                                        f"基准指数数据已保存到 {benchmark_file}, 共 {len(df)} 条记录",
-                                        "INFO"
-                                    )
-                            else:
-                                # 如果没有time字段，使用日期范围（备用方案）
-                                if self.trader_callback:
-                                    self.trader_callback.gui.log_message(
-                                        "警告：基准数据中没有时间信息，将使用日期范围替代",
+                                        f"基准指数 {benchmark_code} DataFrame中没有close列",
                                         "WARNING"
                                     )
-                                dates = pd.date_range(
-                                    start=pd.to_datetime(self.config.backtest_start, format='%Y%m%d'),
-                                    end=pd.to_datetime(self.config.backtest_end, format='%Y%m%d'),
-                                    freq='B'  # 使用工作日频率
-                                )[:len(closes)]  # 确保长度匹配
+                            else:
+                                closes = stock_data['close']
 
-                                df = pd.DataFrame({
-                                    'date': dates,
-                                    'close': closes
-                                })
+                                # 获取时间信息 (优先级: time列 > DatetimeIndex > 降级方案)
+                                if 'time' in stock_data.columns and len(stock_data['time']) > 0:
+                                    # 从time列提取时间戳
+                                    dates = pd.to_datetime(stock_data['time'], unit='ms')
+                                elif isinstance(stock_data.index, pd.DatetimeIndex):
+                                    # 从DatetimeIndex提取时间
+                                    dates = stock_data.index
+                                else:
+                                    # 降级方案: 使用日期范围
+                                    if self.trader_callback:
+                                        self.trader_callback.gui.log_message(
+                                            "警告：基准数据中没有时间信息，将使用日期范围替代",
+                                            "WARNING"
+                                        )
+                                    dates = pd.date_range(
+                                        start=pd.to_datetime(self.config.backtest_start, format='%Y%m%d'),
+                                        end=pd.to_datetime(self.config.backtest_end, format='%Y%m%d'),
+                                        freq='B'
+                                    )[:len(closes)]
 
-                                benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
-                                df.to_csv(benchmark_file, index=False)
-
+                        elif isinstance(stock_data, dict):
+                            # Dict格式处理 (旧版兼容)
+                            if 'close' not in stock_data or len(stock_data['close']) == 0:
                                 if self.trader_callback:
                                     self.trader_callback.gui.log_message(
-                                        f"基准指数数据已保存到 {benchmark_file}, 共 {len(df)} 条记录",
-                                        "INFO"
+                                        f"基准指数 {benchmark_code} Dict中没有close键",
+                                        "WARNING"
                                     )
+                            else:
+                                closes = stock_data['close']
+
+                                # 获取时间信息
+                                if 'time' in stock_data and len(stock_data['time']) > 0:
+                                    dates = pd.to_datetime(stock_data['time'], unit='ms')
+                                else:
+                                    if self.trader_callback:
+                                        self.trader_callback.gui.log_message(
+                                            "警告：基准数据中没有时间信息，将使用日期范围替代",
+                                            "WARNING"
+                                        )
+                                    dates = pd.date_range(
+                                        start=pd.to_datetime(self.config.backtest_start, format='%Y%m%d'),
+                                        end=pd.to_datetime(self.config.backtest_end, format='%Y%m%d'),
+                                        freq='B'
+                                    )[:len(closes)]
                         else:
                             if self.trader_callback:
                                 self.trader_callback.gui.log_message(
-                                    f"基准指数 {benchmark_code} 收盘价数据为空",
+                                    f"基准指数 {benchmark_code} 数据格式不支持: {type(stock_data)}",
                                     "WARNING"
+                                )
+
+                        # 保存基准数据
+                        if closes is not None and dates is not None:
+                            df = pd.DataFrame({
+                                'date': dates,
+                                'close': closes
+                            })
+
+                            benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
+                            df.to_csv(benchmark_file, index=False)
+
+                            if self.trader_callback:
+                                self.trader_callback.gui.log_message(
+                                    f"基准指数数据已保存到 {benchmark_file}, 共 {len(df)} 条记录",
+                                    "INFO"
                                 )
                     else:
                         if self.trader_callback:
