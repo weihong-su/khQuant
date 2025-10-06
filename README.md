@@ -33,11 +33,7 @@
 * **B站 (哔哩哔哩)**：[Mr看海](https://space.bilibili.com/3546667687086777)
 * **头条**：[Mr.看海](https://www.toutiao.com/c/user/token/MS4wLjABAAAAzyc56KI8pUK0LEasGJ88GQ7YOog-eiSLihjiYFUUUh32URE2tUnJpiPITu4uhJCQ/?)
 
-一直以来，我都致力于为大家提供一款免费开源的量化交易系统。可以说，这是用爱发电的产物。目前，系统开发和维护的微薄收入主要来源于通过我推荐渠道开户的朋友们所带来的些许返佣，以及热心用户的慷慨打赏。如果您觉得这款系统对您有所帮助，不妨请作者喝杯咖啡，您的这份支持，是我持续更新与完善的最大动力！
 
-<p align="center">
-    <img src="https://khsci.com/khQuant/wp-content/uploads/2025/06/%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_20250606235710-300x300.png" alt="微信打赏" width="300"/>
-</p>
 
 ---
 
